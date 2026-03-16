@@ -1,0 +1,11 @@
+{
+  "name": "JSON to Flyer Generator",
+  "id": "1603752790590730211",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "permissions": ["teamlibrary"],
+  "editorType": ["figma"],
+  "networkAccess": { "allowedDomains": ["https://figma-proxy-1.onrender.com/"] },
+  "documentAccess": "dynamic-page"
+}

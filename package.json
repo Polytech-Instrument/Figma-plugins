@@ -1,0 +1,18 @@
+{
+    "scripts": {
+        "build": "node scripts/build.js"
+    },
+    "name": "ptech_auto",
+    "version": "1.0.0",
+    "main": "index.js",
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "description": "",
+    "dependencies": {
+        "typescript": "^5.9.3"
+    },
+    "devDependencies": {
+        "esbuild": "^0.23.1"
+    }
+}

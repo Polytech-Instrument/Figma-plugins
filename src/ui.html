@@ -1,0 +1,1053 @@
+﻿<!DOCTYPE html>
+<style>
+  :root {
+    --bg-1: #ffffff;
+    --bg-2: #f6f6f8;
+    --glass: rgba(255, 255, 255, 0.9);
+    --glass-strong: rgba(255, 255, 255, 0.95);
+    --stroke: rgba(179, 23, 53, 0.18);
+    --text: #1b1b1f;
+    --text-dim: rgba(27, 27, 31, 0.6);
+    --accent: #B31735;
+    --accent-2: #cf3e5b;
+    --shadow: 0 10px 28px rgba(20, 20, 26, 0.12);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    padding: 10px;
+    color: var(--text);
+    background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-2) 100%);
+    min-height: 100vh;
+  }
+
+  .bg-orb {
+    position: fixed;
+    width: 260px;
+    height: 260px;
+    filter: blur(40px);
+    opacity: 0.6;
+    border-radius: 999px;
+    pointer-events: none;
+  }
+  .orb-1 { background: rgba(179, 23, 53, 0.2); top: -80px; left: -60px; }
+  .orb-2 { background: rgba(179, 23, 53, 0.12); bottom: -90px; right: -70px; }
+
+  .app {
+    position: relative;
+    width: 430px;
+    max-width: 100%;
+    margin: 0 auto;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  h3 {
+    margin: 0 0 12px 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    color: var(--text);
+  }
+  
+  /* Секции и блоки */
+  .section {
+    margin-bottom: 18px;
+    padding: 12px;
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 14px;
+    box-shadow: 0 8px 20px rgba(20,20,26,0.08);
+  }
+  .file-block { 
+      margin-bottom: 10px; 
+      border: 1px solid rgba(0,0,0,0.06); 
+    padding: 6px 10px;
+      border-radius: 10px; 
+      background: #fafafa; 
+      transition: all 0.2s;
+  }
+  .file-block:hover { border-color: rgba(179, 23, 53, 0.28); }
+  .label {
+    font-size: 10px;
+    font-weight: 700;
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  
+  /* Кнопки */
+  button {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff;
+    border: 1px solid rgba(179, 23, 53, 0.6);
+    padding: 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    width: 100%;
+    font-weight: 600;
+    font-size: 13px;
+    transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    box-shadow: 0 8px 18px rgba(0,0,0,0.2);
+  }
+  button.secondary { background: #f2f2f4; color: var(--text); border: 1px solid rgba(0,0,0,0.08); }
+  button:hover { transform: translateY(-1px); border-color: rgba(179, 23, 53, 0.5); }
+  button:disabled { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.45); cursor: not-allowed; }
+  
+  hr { border: 0; border-top: 1px solid rgba(0,0,0,0.08); margin: 16px 0; }
+
+  /* --- ПРОГРЕСС ОВЕРЛЕЙ --- */
+  #progress-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      padding: 20px;
+      box-sizing: border-box;
+  }
+  #progress-overlay.show { display: flex; }
+  .overlay-card {
+      width: 100%;
+      max-width: 280px;
+      background: #fff;
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      text-align: center;
+      backdrop-filter: none;
+  }
+  .spinner {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 3px solid rgba(0,0,0,0.08);
+      border-top-color: var(--accent);
+      margin: 0 auto 12px auto;
+      animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-bg {
+      background: rgba(0,0,0,0.08);
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+      width: 100%;
+  }
+  .progress-fill {
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s ease-out;
+      border-radius: 4px;
+  }
+  .status-text {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--text-dim);
+      display: flex;
+      justify-content: space-between;
+  }
+  .status-title {
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text);
+  }
+  .status-detail {
+      color: var(--text-dim);
+      font-size: 10px;
+      margin-top: 6px;
+      height: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+  }
+
+  .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: #fff;
+      border: 1px solid rgba(0,0,0,0.06);
+  }
+  .gear-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: 1px solid rgba(0,0,0,0.08);
+      background: #fff;
+      color: var(--text);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 16px rgba(20,20,26,0.1);
+  }
+  .gear-btn:hover { border-color: rgba(179, 23, 53, 0.5); }
+
+  .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.3);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      padding: 20px;
+      box-sizing: border-box;
+  }
+  .modal.show { display: flex; }
+  .modal-card {
+      width: 100%;
+      max-width: 320px;
+      background: #fff;
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: none;
+  }
+  .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+  }
+  .modal-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+  }
+  .close-btn {
+      background: transparent;
+      border: none;
+      font-size: 16px;
+      cursor: pointer;
+      width: auto;
+      padding: 4px;
+  }
+  input, select, textarea {
+    width: 100%;
+    padding: 8px;
+    font-size: 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(0,0,0,0.08);
+    background: #fff;
+    color: var(--text);
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  select option { color: #111; }
+  .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .cfg-label { font-size: 11px; color: var(--text-dim); display: block; }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text);
+    padding: 4px 2px;
+  }
+  .toggle-row.compact { gap: 6px; font-size: 11px; }
+  .inline-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .inline-block { display: flex; align-items: center; gap: 8px; }
+  .radio-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .radio-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
+  .radio-item input { width: 13px; height: 13px; accent-color: var(--accent); }
+  .toggle-row input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+  }
+  .dropzone {
+    position: relative;
+    border: 1px dashed rgba(179, 23, 53, 0.35);
+    border-radius: 10px;
+    padding: 12px;
+    background: #fff;
+    text-align: left;
+    transition: border-color 0.2s ease, background 0.2s ease;
+  }
+  .dropzone.dragover {
+    border-color: var(--accent);
+    background: rgba(179, 23, 53, 0.1);
+  }
+  .drop-title {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .drop-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .drop-file {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .drop-filename {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text);
+    opacity: 0.85;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+</style>
+
+<div class="bg-orb orb-1"></div>
+<div class="bg-orb orb-2"></div>
+
+<div class="app">
+    <div class="topbar">
+        <div style="font-size: 13px; font-weight: 600;">Ptech Auto</div>
+        <button id="settingsBtn" class="gear-btn" title="Настройки">⚙</button>
+    </div>
+
+<div class="section">
+    <h3>1. Генерация Каталога</h3>
+    <div class="file-block">
+        <div class="inline-row">
+            <div class="inline-block">
+                <label class="toggle-row compact">
+                    <input type="checkbox" id="giftBlockToggle">
+                    Блок подарков
+                </label>
+                <div class="radio-group" id="giftBlockMode">
+                    <label class="radio-item">
+                        <input type="radio" name="giftBlockMode" value="twoThirds" checked>
+                        Сдвиг на 2/3
+                    </label>
+                    <label class="radio-item">
+                        <input type="radio" name="giftBlockMode" value="startSecond">
+                        Со 2 страницы
+                    </label>
+                </div>
+            </div>
+            <label class="toggle-row compact">
+                <input type="checkbox" id="compactLayoutToggle">
+                Компактная верстка
+            </label>
+        </div>
+    </div>
+    <div class="file-block">
+        <span class="label">JSON Товары</span>
+        <div class="dropzone" id="jsonDrop">
+            <div class="drop-title">Перетащите JSON сюда</div>
+            <div class="drop-hint">или кликните, чтобы выбрать файл</div>
+            <input class="drop-file" type="file" id="jsonInput" accept=".json">
+            <div class="drop-filename" id="jsonFileName">Файл не выбран</div>
+        </div>
+    </div>
+    <div class="file-block">
+        <span class="label">Порядок + Скидки (CSV/TXT)</span>
+        <div class="dropzone" id="orderDrop">
+            <div class="drop-title">Перетащите CSV порядка</div>
+            <div class="drop-hint">Код, Скидка без условий, Условия</div>
+            <input class="drop-file" type="file" id="orderInput" accept=".csv,.txt">
+            <div class="drop-filename" id="orderFileName">Файл не выбран</div>
+        </div>
+    </div>
+    <button id="runBtn">Создать каталог</button>
+    <button id="testBtn" class="secondary" style="margin-top: 8px;">Тестовая генерация</button>
+</div>
+
+<hr>
+
+<div class="section">
+    <h3>2. Обновление информации</h3>
+    <p style="font-size: 11px; color: var(--text-dim); margin-bottom: 10px; line-height: 1.4;">
+        Обновит информацию на текущей странице (поиск по имени фрейма = артикулу). Скидки обновляются всегда, цена — если колонка цены есть в таблице.
+    </p>
+    <div class="file-block">
+        <span class="label">CSV Таблица</span>
+        <div class="dropzone" id="csvDrop">
+            <div class="drop-title">Перетащите CSV сюда</div>
+            <div class="drop-hint">или кликните, чтобы выбрать файл</div>
+            <input class="drop-file" type="file" id="csvUpdateInput" accept=".csv">
+            <div class="drop-filename" id="csvFileName">Файл не выбран</div>
+        </div>
+    </div>
+    <button id="updateBtn" class="secondary">Обновить информацию</button>
+</div>
+
+<div id="progress-overlay">
+    <div class="overlay-card">
+        <div class="spinner"></div>
+        <div id="p-status" class="status-title">Подготовка...</div>
+        <div class="progress-bg">
+            <div id="p-bar" class="progress-fill"></div>
+        </div>
+        <div class="status-text">
+            <span id="p-detail">Инициализация</span>
+            <span id="p-percent">0%</span>
+        </div>
+        <button id="stopBtn" class="secondary" style="margin-top: 12px;">Остановить</button>
+    </div>
+</div>
+
+<div id="settingsModal" class="modal">
+    <div class="modal-card">
+        <div class="modal-header">
+            <div class="modal-title">Настройки макета</div>
+            <button id="settingsCloseBtn" class="close-btn" title="Закрыть">✕</button>
+        </div>
+        <div class="cfg-grid">
+            <label class="cfg-label">A4 ширина
+                <input type="number" id="cfgA4W">
+            </label>
+            <label class="cfg-label">A4 высота
+                <input type="number" id="cfgA4H">
+            </label>
+            <label class="cfg-label">PAD X
+                <input type="number" id="cfgPadX">
+            </label>
+            <label class="cfg-label">PAD Y
+                <input type="number" id="cfgPadY">
+            </label>
+            <label class="cfg-label">COL GAP
+                <input type="number" id="cfgColGap">
+            </label>
+            <label class="cfg-label">ITEM GAP
+                <input type="number" id="cfgItemGap">
+            </label>
+            <label class="cfg-label">COL W
+                <input type="number" id="cfgColW">
+            </label>
+            <label class="cfg-label">COL W REDUCE
+                <input type="number" id="cfgColWReduce">
+            </label>
+            <label class="cfg-label">Сдвиг 1/3
+                <input type="number" step="0.01" id="cfgShiftDefault">
+            </label>
+            <label class="cfg-label">Сдвиг 2/3
+                <input type="number" step="0.01" id="cfgShiftTwoThirds">
+            </label>
+            <label class="cfg-label">Footer H
+                <input type="number" id="cfgFooterH">
+            </label>
+        </div>
+        <div style="margin-top: 8px;">
+            <label style="font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="cfgAutoSplit">
+                Авторазбивка длинных карточек
+            </label>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 10px;">
+            <button id="cfgResetBtn" class="secondary" style="width: 50%;">Сброс</button>
+            <button id="cfgSaveBtn" class="secondary" style="width: 50%;">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+</div>
+
+<script>
+const PROXY_BASE = "https://figma-proxy-1.onrender.com/img?url=";
+const API_BASE = "https://ptech.ru/getproductimage.php?article="; 
+const PROXY_HOST = "https://figma-proxy-1.onrender.com";
+let proxyWarmPromise = null;
+const imageCache = new Map();
+const SETTINGS_KEY = "ptech_settings_v1";
+const DEFAULT_SETTINGS = {
+    A4_W: 595,
+    A4_H: 842,
+    PAD_X: 20,
+    PAD_Y: 30,
+    COL_GAP: 20,
+    ITEM_GAP: 0,
+    COL_W: 268,
+    COL_W_REDUCE: 20,
+    FIRST_PAGE_SHIFT_DEFAULT: 1 / 3,
+    FIRST_PAGE_SHIFT_TWO_THIRDS: 2 / 3,
+    FOOTER_H: 110,
+    AUTO_SPLIT: true
+};
+
+// --- УПРАВЛЕНИЕ UI ---
+function showProgress(show) {
+    const overlay = document.getElementById('progress-overlay');
+    if (show) overlay.classList.add('show');
+    else overlay.classList.remove('show');
+}
+
+function updateProgress(curr, total, text = "", detail = "") {
+    const percent = Math.round((curr / total) * 100);
+    document.getElementById('p-bar').style.width = percent + "%";
+    document.getElementById('p-percent').innerText = percent + "%";
+    document.getElementById('p-status').innerText = text;
+    document.getElementById('p-detail').innerText = detail;
+}
+
+function disableButtons(disabled) {
+    document.getElementById('runBtn').disabled = disabled;
+    document.getElementById('updateBtn').disabled = disabled;
+    document.getElementById('testBtn').disabled = disabled;
+    const stopBtn = document.getElementById('stopBtn');
+    if (stopBtn) stopBtn.disabled = !disabled;
+}
+
+function setupDropzone(inputId, dropId, labelId) {
+    const input = document.getElementById(inputId);
+    const drop = document.getElementById(dropId);
+    const label = document.getElementById(labelId);
+    if (!input || !drop || !label) return;
+
+    function setLabel() {
+        const file = input.files && input.files[0];
+        label.textContent = file ? file.name : "Файл не выбран";
+    }
+
+    input.addEventListener('change', setLabel);
+
+    drop.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        drop.classList.add('dragover');
+    });
+    drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+    drop.addEventListener('drop', (e) => {
+        e.preventDefault();
+        drop.classList.remove('dragover');
+        const files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || files.length === 0) return;
+        input.files = files;
+        setLabel();
+    });
+
+    setLabel();
+}
+
+function parseOrderList(text) {
+    const rows = parseCsvAuto(text);
+    if (rows.length === 0) return [];
+
+    let headerIndex = -1;
+    let codeCol = 0;
+    for (let i = 0; i < rows.length; i++) {
+        const cols = rows[i].map(c => normalizeHeader(c));
+        const idx = cols.findIndex(c => c === 'код');
+        if (idx !== -1) {
+            headerIndex = i;
+            codeCol = idx;
+            break;
+        }
+    }
+
+    let start = headerIndex >= 0 ? headerIndex + 1 : 0;
+    if (headerIndex === -1) {
+        for (let i = 0; i < rows.length; i++) {
+            const first = (rows[i]?.[0] || "").trim();
+            if (/^[0-9]{4,}$/.test(first)) {
+                start = i;
+                break;
+            }
+        }
+    }
+    const order = [];
+    for (let i = start; i < rows.length; i++) {
+        const cols = rows[i];
+        if (!cols || cols.length === 0) continue;
+        const raw = (cols[codeCol] || "").trim();
+        if (!raw) continue;
+        if (/^[0-9]{4,}$/.test(raw)) {
+            order.push(raw);
+        }
+    }
+    return order;
+}
+
+async function ensureProxyWarm() {
+    if (proxyWarmPromise) return proxyWarmPromise;
+    proxyWarmPromise = (async () => {
+        try {
+            updateProgress(0, 1, "Поднимаем прокси...", "Первый запрос");
+            await fetch(PROXY_HOST, { method: "GET" });
+        } catch (err) {
+            // Даже если статус не доступен, продолжаем; первый запрос к изображениям разбудит прокси
+            console.warn("Proxy warmup failed:", err?.message || err);
+        }
+    })();
+    return proxyWarmPromise;
+}
+
+// --- ОБРАБОТКА СООБЩЕНИЙ ИЗ CODE.TS ---
+window.onmessage = (e) => {
+    const msg = e.data.pluginMessage;
+    
+    if (msg.type === 'progress') {
+        showProgress(true);
+        // Сообщение вида: "Верстка: 5 / 10"
+        updateProgress(msg.curr, msg.total, "Верстка макета...", `Карточка ${msg.curr} из ${msg.total}`);
+    }
+    
+    if (msg.type === 'complete') {
+        updateProgress(100, 100, "Готово!", msg.text);
+        setTimeout(() => {
+            disableButtons(false);
+            showProgress(false);
+        }, 500);
+    }
+    
+    if (msg.type === 'error') {
+        alert("Ошибка: " + msg.text);
+        disableButtons(false);
+        showProgress(false);
+    }
+
+    if (msg.type === 'split-query') {
+        const name = msg.cardName || "карточка";
+        const h = msg.cardHeight || 0;
+        const col = msg.colHeight || 0;
+        const ok = confirm(`Карточка "${name}" выше колонки (${Math.round(h)} > ${Math.round(col)}). Разбить?`);
+        parent.postMessage({ pluginMessage: { type: 'split-response', id: msg.id, split: ok } }, '*');
+    }
+
+    
+};
+
+
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+function cleanPrice(rawPrice) {
+    if (!rawPrice) return "-";
+    return rawPrice.replace(/\s*за руб\./gi, "").trim();
+}
+
+function setValue(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.value = String(val);
+}
+
+function getNumber(id, fallback) {
+    const el = document.getElementById(id);
+    if (!el) return fallback;
+    const v = parseFloat(el.value);
+    return Number.isFinite(v) ? v : fallback;
+}
+
+function applySettingsToUI(settings) {
+    setValue('cfgA4W', settings.A4_W);
+    setValue('cfgA4H', settings.A4_H);
+    setValue('cfgPadX', settings.PAD_X);
+    setValue('cfgPadY', settings.PAD_Y);
+    setValue('cfgColGap', settings.COL_GAP);
+    setValue('cfgItemGap', settings.ITEM_GAP);
+    setValue('cfgColW', settings.COL_W);
+    setValue('cfgColWReduce', settings.COL_W_REDUCE);
+    setValue('cfgShiftDefault', settings.FIRST_PAGE_SHIFT_DEFAULT);
+    setValue('cfgShiftTwoThirds', settings.FIRST_PAGE_SHIFT_TWO_THIRDS);
+    setValue('cfgFooterH', settings.FOOTER_H);
+    const autoSplitEl = document.getElementById('cfgAutoSplit');
+    if (autoSplitEl) autoSplitEl.checked = !!settings.AUTO_SPLIT;
+}
+
+function getSettingsFromUI() {
+    return {
+        A4_W: getNumber('cfgA4W', DEFAULT_SETTINGS.A4_W),
+        A4_H: getNumber('cfgA4H', DEFAULT_SETTINGS.A4_H),
+        PAD_X: getNumber('cfgPadX', DEFAULT_SETTINGS.PAD_X),
+        PAD_Y: getNumber('cfgPadY', DEFAULT_SETTINGS.PAD_Y),
+        COL_GAP: getNumber('cfgColGap', DEFAULT_SETTINGS.COL_GAP),
+        ITEM_GAP: getNumber('cfgItemGap', DEFAULT_SETTINGS.ITEM_GAP),
+        COL_W: getNumber('cfgColW', DEFAULT_SETTINGS.COL_W),
+        COL_W_REDUCE: getNumber('cfgColWReduce', DEFAULT_SETTINGS.COL_W_REDUCE),
+        FIRST_PAGE_SHIFT_DEFAULT: getNumber('cfgShiftDefault', DEFAULT_SETTINGS.FIRST_PAGE_SHIFT_DEFAULT),
+        FIRST_PAGE_SHIFT_TWO_THIRDS: getNumber('cfgShiftTwoThirds', DEFAULT_SETTINGS.FIRST_PAGE_SHIFT_TWO_THIRDS),
+        FOOTER_H: getNumber('cfgFooterH', DEFAULT_SETTINGS.FOOTER_H),
+        AUTO_SPLIT: !!document.getElementById('cfgAutoSplit')?.checked
+    };
+}
+
+function loadSettings() {
+    try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (!raw) return { ...DEFAULT_SETTINGS };
+        const parsed = JSON.parse(raw);
+        return { ...DEFAULT_SETTINGS, ...parsed };
+    } catch (e) {
+        return { ...DEFAULT_SETTINGS };
+    }
+}
+
+function saveSettings(settings) {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function openSettings() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) modal.classList.add('show');
+}
+
+function closeSettings() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) modal.classList.remove('show');
+}
+
+function readFileAsText(file, encoding = 'utf-8') {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsText(file, encoding);
+    });
+}
+
+function parseDiscounts(csvText) {
+    const map = {};
+    if (!csvText) return map;
+    const rows = parseCsvAuto(csvText);
+    if (rows.length === 0) return map;
+
+    // По требованию: пропускаем первые 2 строки, в 3-й (или ниже) ищем заголовки
+    let headerIndex = -1;
+    let headers = [];
+    for (let i = 2; i < rows.length; i++) {
+        const cols = rows[i].map(c => normalizeHeader(c));
+        const codeIdx = cols.findIndex(c => c === 'код' || c === 'артикул');
+        if (codeIdx !== -1) {
+            headerIndex = i;
+            headers = cols;
+            break;
+        }
+    }
+    if (headerIndex === -1) return map;
+
+    const codeCol = headers.findIndex(h => h === 'код' || h === 'артикул');
+    const discountCol = headers.findIndex(h => h.includes('скидка'));
+    const priceCol = headers.findIndex(h => h === 'цена' || h.includes('базовая цена'));
+
+    for (let i = headerIndex + 1; i < rows.length; i++) {
+        const cols = rows[i];
+        if (!cols || cols.length === 0) continue;
+        const sku = codeCol !== -1 ? (cols[codeCol] || "").trim() : "";
+        if (!sku) continue;
+        const discount = discountCol !== -1 ? (cols[discountCol] || "").trim() : "";
+        if (discount !== "") map[sku] = discount;
+    }
+    return map;
+}
+
+function parseCsvAuto(text) {
+    if (!text) return [];
+
+    const tryDelims = [",", ";"];
+    let bestRows = [];
+    let bestCols = 0;
+
+    for (const delim of tryDelims) {
+        const rows = parseCsv(text, delim);
+        const first = rows.find(r => r.some(c => c.trim() !== "")) || [];
+        const cols = first.length;
+        if (cols > bestCols) {
+            bestCols = cols;
+            bestRows = rows;
+        }
+    }
+
+    return bestRows;
+}
+
+function parseCsv(text, delimiter) {
+    const rows = [];
+    let row = [];
+    let field = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        const next = text[i + 1];
+
+        if (char === '"') {
+            if (inQuotes && next === '"') {
+                field += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (char === delimiter && !inQuotes) {
+            row.push(field);
+            field = "";
+        } else if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && next === '\n') i++;
+            row.push(field);
+            rows.push(row);
+            row = [];
+            field = "";
+        } else {
+            field += char;
+        }
+    }
+    row.push(field);
+    rows.push(row);
+    return rows;
+}
+
+function normalizeHeader(text) {
+    if (!text) return "";
+    return text.replace(/^\uFEFF/, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function parseUpdateInfo(csvText) {
+    const map = {};
+    if (!csvText) return map;
+    const rows = parseCsvAuto(csvText);
+
+    let headerIndex = -1;
+    let headers = [];
+    for (let i = 0; i < rows.length; i++) {
+        const cols = rows[i].map(c => normalizeHeader(c));
+        const codeIdx = cols.findIndex(c => c === 'код');
+        if (codeIdx !== -1) {
+            headerIndex = i;
+            headers = cols;
+            break;
+        }
+    }
+    if (headerIndex === -1) return map;
+
+    const codeCol = headers.findIndex(h => h === 'код');
+    const discountCol = headers.findIndex(h => h === 'скидка без условий');
+    const priceCol = headers.findIndex(h => h === 'базовая цена');
+    const conditionsCol = headers.findIndex(h => h === 'условия');
+
+    for (let i = headerIndex + 1; i < rows.length; i++) {
+        const cols = rows[i];
+        if (!cols || cols.length === 0) continue;
+        const sku = codeCol !== -1 ? (cols[codeCol] || "").trim() : "";
+        if (!sku) continue;
+        const discount = discountCol !== -1 ? (cols[discountCol] || "").trim() : "";
+        const price = priceCol !== -1 ? (cols[priceCol] || "").trim() : "";
+        const conditions = conditionsCol !== -1 ? (cols[conditionsCol] || "").trim() : "";
+        map[sku] = { discount, price, conditions };
+    }
+    return map;
+}
+
+async function fetchImageForProduct(sku) {
+    if (!sku) return null;
+    try {
+        if (imageCache.has(sku)) return imageCache.get(sku);
+        await ensureProxyWarm();
+        const apiUrl = API_BASE + sku;
+        const proxyApiUrl = PROXY_BASE + encodeURIComponent(apiUrl);
+        const apiResponse = await fetch(proxyApiUrl);
+        if (!apiResponse.ok) return null;
+        const apiData = await apiResponse.json();
+        if (!apiData || !apiData.data || !apiData.data.image) return null;
+        const realImageUrl = apiData.data.image;
+        const proxyImageUrl = PROXY_BASE + encodeURIComponent(realImageUrl);
+        const imgResponse = await fetch(proxyImageUrl);
+        if (!imgResponse.ok) return null;
+        const imgBlob = await imgResponse.blob();
+        const imgBuffer = await imgBlob.arrayBuffer();
+        if (imgBuffer.byteLength < 50) return null;
+        const bytes = new Uint8Array(imgBuffer);
+        imageCache.set(sku, bytes);
+        return bytes;
+    } catch (err) {
+        console.warn(`Ошибка фото ${sku}:`, err.message);
+        return null;
+    }
+}
+
+// --- ЗАПУСК ГЕНЕРАЦИИ (КНОПКА 1) ---
+async function startGeneration(limitCount = null) {
+    const jsonFile = document.getElementById('jsonInput').files[0];
+    const orderFile = document.getElementById('orderInput')?.files?.[0] || null;
+    const giftBlockEnabled = document.getElementById('giftBlockToggle').checked;
+    const giftBlockMode = (document.querySelector('input[name="giftBlockMode"]:checked') || {}).value || "twoThirds";
+    const compactLayout = document.getElementById('compactLayoutToggle').checked;
+    
+    // Проверка наличия главного файла
+    if (!jsonFile) return alert("Выберите JSON файл!");
+    
+    // Блокируем интерфейс
+    disableButtons(true);
+    showProgress(true);
+    updateProgress(0, 100, "Чтение файлов...", "Инициализация");
+
+    try {
+        // 1. Читаем ТОВАРЫ (JSON) -> UTF-8
+        updateProgress(10, 100, "Чтение JSON...", "Парсинг каталога");
+        const jsonText = await readFileAsText(jsonFile, 'utf-8');
+        const jsonData = JSON.parse(jsonText);
+
+        let orderList = [];
+        let infoMap = {};
+        if (orderFile) {
+            updateProgress(12, 100, "Чтение CSV...", orderFile.name);
+            let orderText = await readFileAsText(orderFile, 'utf-8');
+            orderList = parseOrderList(orderText);
+            infoMap = parseUpdateInfo(orderText);
+            if (orderList.length === 0 && Object.keys(infoMap).length === 0) {
+                orderText = await readFileAsText(orderFile, 'windows-1251');
+                orderList = parseOrderList(orderText);
+                infoMap = parseUpdateInfo(orderText);
+            }
+            if (orderList.length === 0 && Object.keys(infoMap).length === 0) {
+                orderText = await readFileAsText(orderFile, 'utf-16le');
+                orderList = parseOrderList(orderText);
+                infoMap = parseUpdateInfo(orderText);
+            }
+        }
+        
+        const total = jsonData.length;
+        const processedGroups = [];
+        const maxCount = limitCount && Number.isFinite(limitCount) ? Math.min(total, limitCount) : total;
+
+        // 3. ЦИКЛ ОБРАБОТКИ
+        for (let i = 0; i < maxCount; i++) {
+            const item = jsonData[i];
+            
+            // Обновляем полоску прогресса
+            // (i + 1) / total * 100
+            updateProgress(i + 1, maxCount, "Обработка данных...", item.title || "Товар");
+
+            // Ищем главный артикул (для картинки и скидки)
+            let mainSku = null;
+            if (item.variants && item.variants.length > 0) {
+                mainSku = item.variants[0].sku;
+            }
+
+            // А. Качаем картинку
+            if (i === 0) updateProgress(0, maxCount, "Скачивание фото...", "Первый товар");
+            // (Функция сама сходит на API ptech, получит ссылку и скачает байты через прокси)
+            const imageBytes = await fetchImageForProduct(mainSku);
+
+            // В. Собираем объект для отправки в Figma
+            const mainDiscount = mainSku && infoMap[mainSku] ? infoMap[mainSku].discount : null;
+            const mainConditions = mainSku && infoMap[mainSku] ? infoMap[mainSku].conditions : null;
+            processedGroups.push({
+                headerName: item.title,          
+                descriptionText: item.description, 
+                imageBytes: imageBytes,
+                discountText: mainDiscount || null,
+                discountInfoText: mainConditions || null,
+                mainSku: mainSku,
+                
+                // Передаем ID бренда для переключения логотипа
+                brandId: item.brand, 
+
+                items: item.variants.map(v => ({
+                    sku: v.sku,
+                    specs: v.specs,
+                    min: v.min,
+                    qty: v.qty,
+                    price: cleanPrice(v.price),
+                    discount: infoMap?.[v.sku]?.discount || null
+                }))
+            });
+        }
+
+        // 4. ЗАВЕРШЕНИЕ
+        updateProgress(100, 100, "Передача данных...", "Отправляем в Figma");
+        
+        // Небольшая задержка, чтобы глаз успел заметить 100%
+        const settings = getSettingsFromUI();
+    const layout = {
+        giftBlockEnabled,
+        giftBlockMode,
+        compactLayout,
+        settings,
+        orderList,
+        infoMap
+    };
+
+        setTimeout(() => {
+             parent.postMessage({ 
+                 pluginMessage: { type: 'build', data: { groups: processedGroups, layout } } 
+             }, '*');
+        }, 200);
+
+    } catch (err) {
+        console.error(err);
+        alert("Ошибка при генерации: " + err.message);
+        disableButtons(false);
+        showProgress(false);
+    }
+}
+
+
+// --- ЗАПУСК ОБНОВЛЕНИЯ ---
+async function startUpdate() {
+    const csvFile = document.getElementById('csvUpdateInput').files[0];
+    if (!csvFile) return alert("Выберите CSV файл с информацией!");
+    
+    disableButtons(true);
+    showProgress(true);
+    updateProgress(0, 100, "Чтение CSV...", "Подготовка");
+
+    try {
+        let csvText = await readFileAsText(csvFile, 'utf-8');
+        let infoMap = parseUpdateInfo(csvText);
+        if (Object.keys(infoMap).length === 0) {
+            csvText = await readFileAsText(csvFile, 'windows-1251');
+            infoMap = parseUpdateInfo(csvText);
+        }
+        
+        updateProgress(50, 100, "Обновление...", "Ищем карточки на холсте");
+        
+        parent.postMessage({ 
+            pluginMessage: { type: 'update-info', data: { infoMap } } 
+        }, '*');
+
+    } catch (err) {
+        alert("Ошибка чтения CSV: " + err.message);
+        disableButtons(false);
+        showProgress(false);
+    }
+}
+
+async function startTestGeneration() {
+    return startGeneration(10);
+}
+
+
+// bind buttons after DOM is ready
+window.addEventListener('DOMContentLoaded', () => {
+    const settings = loadSettings();
+    applySettingsToUI(settings);
+    setupDropzone('jsonInput', 'jsonDrop', 'jsonFileName');
+    setupDropzone('csvUpdateInput', 'csvDrop', 'csvFileName');
+    setupDropzone('orderInput', 'orderDrop', 'orderFileName');
+    document.getElementById('settingsBtn').addEventListener('click', openSettings);
+    document.getElementById('settingsCloseBtn').addEventListener('click', closeSettings);
+    document.getElementById('settingsModal').addEventListener('click', (e) => {
+        if (e.target && e.target.id === 'settingsModal') closeSettings();
+    });
+    document.getElementById('runBtn').addEventListener('click', startGeneration);
+    document.getElementById('updateBtn').addEventListener('click', startUpdate);
+    document.getElementById('testBtn').addEventListener('click', startTestGeneration);
+    document.getElementById('stopBtn').addEventListener('click', () => {
+        updateProgress(0, 1, "Остановка...", "Ждем завершения");
+        parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+    });
+    document.getElementById('cfgSaveBtn').addEventListener('click', () => {
+        const s = getSettingsFromUI();
+        saveSettings(s);
+        closeSettings();
+    });
+    document.getElementById('cfgResetBtn').addEventListener('click', () => {
+        applySettingsToUI(DEFAULT_SETTINGS);
+        saveSettings(DEFAULT_SETTINGS);
+        closeSettings();
+    });
+});
+</script>
