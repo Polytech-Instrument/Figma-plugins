@@ -19,7 +19,7 @@
 1. Скачать архив релиза
 2. Распаковать его в удобную папку
 3. В Figma открыть `Plugins` -> `Development` -> `Import plugin from manifest...`
-4. Выбрать файл [manifest.json](<ПУТЬ_ДО_АРХИВА>/dist/manifest.json)
+4. Выбрать файл `manifest.json` `<ПУТЬ_ДО_АРХИВА>/dist/manifest.json`
 
 После этого плагин появится в локальных development plugins.
 
