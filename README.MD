@@ -26,7 +26,7 @@
 ## Как пользоваться
 
 ### 1. Генерация каталога
-![alt text](../../readme_media/screen1.jpg)
+![alt text](https://github.com/Polytech-Instrument/Figma-plugins/blob/main/readme_media/screen1.jpg)
 Нужно загрузить:
 
 - `JSON` с товарами
@@ -49,7 +49,7 @@
 7. Собирает страницы в Figma
 
 ### 2. Обновление информации
-![alt text](../../readme_media/screen2.jpg)
+![alt text](https://github.com/Polytech-Instrument/Figma-plugins/blob/main/readme_media/screen2.jpg)
 Нужно загрузить `CSV`.
 
 Что обновляется:
