@@ -27,6 +27,7 @@
 
 ### 1. Генерация каталога
 ![alt text](https://github.com/Polytech-Instrument/Figma-plugins/blob/main/readme_media/screen1.jpg)
+
 Нужно загрузить:
 
 - `JSON` с товарами
@@ -50,6 +51,7 @@
 
 ### 2. Обновление информации
 ![alt text](https://github.com/Polytech-Instrument/Figma-plugins/blob/main/readme_media/screen2.jpg)
+
 Нужно загрузить `CSV`.
 
 Что обновляется:
@@ -159,7 +161,7 @@
 
 ## Сборка релиза
 
-Скачиваете (новый релиз)[https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable]
+Скачиваете [новый релиз](https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable)
 и заменяете в своей папке файлы:
 - `manifest.json`
 - `ui.html`
