@@ -3,7 +3,7 @@
 // src/app/config.ts
 var CONFIG = {
   // Layout
-  A4_W: 595,
+  A4_W: 593,
   A4_H: 842,
   PAD_X: 20,
   PAD_Y: 30,
