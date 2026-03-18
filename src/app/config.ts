@@ -1,6 +1,6 @@
 ﻿export const CONFIG = {
     // Layout
-    A4_W: 595,
+    A4_W: 593,
     A4_H: 842,
     PAD_X: 20,
     PAD_Y: 30,
@@ -143,7 +143,3 @@ export const KEY_ROW_ITEM = "781e1213978776223960d4dacc2bd66c0306e43e";
 export const KEY_MAIN_LOGOTYPES_SET = "3c0b8732f057d32fe14841dd1885fdd36851b661";
 export const KEY_FOOTER = "d77e854d909571f399e78bbab3103ad48d9e9848";
 
-// External services (set here, not in UI)
-export const NANO_BANANA_API_KEY = "AIzaSyBaetEwZdeLVXo6dqk5IuEM7boeVnNrHAk";
-export const NANO_BANANA_PROMPT = "Сгенерируй изображение этих трех товаров на светлом фоне";
-export const NANO_BANANA_MODEL = "gemini-2.5-flash-image";
