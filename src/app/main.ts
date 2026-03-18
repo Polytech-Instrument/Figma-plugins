@@ -51,8 +51,11 @@ figma.ui.onmessage = async (msg) => {
             await updateInfoOnPage(msg.data, () => cancelRequested);
         }
     } catch (e) {
-        figma.notify(e.message, { error: true });
-        figma.ui.postMessage({ type: 'error', text: e.message });
+        const message = e instanceof Error
+            ? (e.message || "Неизвестная ошибка")
+            : (typeof e === "string" && e.trim() ? e : "Неизвестная ошибка");
+        figma.notify(message, { error: true });
+        figma.ui.postMessage({ type: 'error', text: message });
     }
 };
 

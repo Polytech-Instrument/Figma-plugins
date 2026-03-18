@@ -1150,8 +1150,9 @@ figma.ui.onmessage = async (msg) => {
       await updateInfoOnPage(msg.data, () => cancelRequested);
     }
   } catch (e) {
-    figma.notify(e.message, { error: true });
-    figma.ui.postMessage({ type: "error", text: e.message });
+    const message = e instanceof Error ? e.message || "\u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430\u044F \u043E\u0448\u0438\u0431\u043A\u0430" : typeof e === "string" && e.trim() ? e : "\u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u0430\u044F \u043E\u0448\u0438\u0431\u043A\u0430";
+    figma.notify(message, { error: true });
+    figma.ui.postMessage({ type: "error", text: message });
   }
 };
 async function loadFonts() {
