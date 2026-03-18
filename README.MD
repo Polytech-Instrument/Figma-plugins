@@ -16,7 +16,7 @@
 
 Сборка уже выложена в [GitHub Releases](https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable):
 
-1. [Скачать архив релиза](https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable)
+1. [Скачать архив релиза](https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable) `любой из трех архивов, но можно просто самый первый с указанием версии`
 2. Распаковать его в удобную папку
 3. В Figma открыть `Plugins` -> `Development` -> `Import plugin from manifest...`
 4. Выбрать файл `manifest.json` `<ПУТЬ_ДО_АРХИВА>/dist/manifest.json`
