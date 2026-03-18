@@ -108,7 +108,14 @@ export async function createBrochure(
 
         const colMaxHForSplit = currentLayout.columns[0].height;
         let cardsToPlace: FrameNode[] = [cardFrame];
-        if (cardFrame.height > colMaxHForSplit) {
+        const currentContentHForSplit = calculateContentHeight(activeColumn);
+        const currentGapForSplit = activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0;
+        const remainingHForSplit = activeColumn.height - currentContentHForSplit - currentGapForSplit;
+        const hasManyItems = (group.items?.length || 0) > 10;
+        const shouldTrySplit =
+            cardFrame.height > colMaxHForSplit ||
+            (hasManyItems && activeColumn.children.length > 0 && remainingHForSplit < cardFrame.height);
+        if (shouldTrySplit) {
             let doSplit = !!opts?.autoSplit;
             if (!doSplit && opts?.askSplit) {
                 doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxHForSplit);
