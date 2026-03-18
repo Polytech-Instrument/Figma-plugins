@@ -18,8 +18,11 @@
 
 1. [Скачать архив релиза](https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable) `любой из трех архивов, но можно просто самый первый с указанием версии`
 2. Распаковать его в удобную папку
-3. В Figma открыть `Plugins` -> `Development` -> `Import plugin from manifest...`
-4. Выбрать файл `manifest.json` `<ПУТЬ_ДО_АРХИВА>/dist/manifest.json`
+![figma image](https://github.com/Polytech-Instrument/Figma-plugins/blob/main/readme_media/figma_add.jpg)
+3. Зайти в [Figma](https://figma.com), авторизоваться и нажать + (новый дизайн файл)
+![manifest import](https://github.com/Polytech-Instrument/Figma-plugins/blob/main/readme_media/manifest.jpg)
+4. В [Figma](https://figma.com) открыть `Plugins` -> `Development` -> `Import plugin from manifest...`
+5. Выбрать файл `manifest.json` `<ПУТЬ_ДО_АРХИВА>/dist/manifest.json`
 
 После этого плагин появится в локальных development plugins.
 
@@ -30,8 +33,8 @@
 
 Нужно загрузить:
 
-- `JSON` с товарами
-- `CSV/TXT` с порядком, скидками и условиями
+- `JSON` с товарами из выгрузки из 1С, инструкция на нашем сервере `\\fs\Отделы\Департамент закупок и маркетинга\[Маркетинг]\[Регламенты ТЗ]`
+- `CSV/TXT` с порядком, скидками и условиями - это таблица от отдела закупок, ежемесячная
 
 Опционально:
 
