@@ -16,13 +16,14 @@
 
 Сборка уже выложена в [GitHub Releases](https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable):
 
-1. [Скачать архив релиза](https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable) `любой из трех архивов, но можно просто самый первый с указанием версии`
+1. [Скачать архив релиза](https://github.com/Polytech-Instrument/Figma-plugins/releases/tag/stable) `Лучше скачивать dist.zip, он самый актуальный или по дате (самый свежий)`
 2. Распаковать его в удобную папку
+3. Внутри архива есть папка шрифты, их нужно установить в `C:\Windows\Fonts`
+4. Зайти в [Figma](https://figma.com), авторизоваться и нажать + (новый дизайн файл)
 ![figma image](https://github.com/Polytech-Instrument/Figma-plugins/blob/main/readme_media/figma_add.jpg)
-3. Зайти в [Figma](https://figma.com), авторизоваться и нажать + (новый дизайн файл)
+5. В [Figma](https://figma.com) открыть `Plugins` (значек плейстейшн) -> в поиске написать `manifest` ВНИМАНИЕ!! должен быть установлен [клиент Figma](https://www.figma.com/download/desktop/win)
 ![manifest import](https://github.com/Polytech-Instrument/Figma-plugins/blob/main/readme_media/manifest.jpg)
-4. В [Figma](https://figma.com) открыть `Plugins` -> `Development` -> `Import plugin from manifest...`
-5. Выбрать файл `manifest.json` `<ПУТЬ_ДО_АРХИВА>/dist/manifest.json`
+6. Выбрать файл `manifest.json` `<ПУТЬ_ДО_АРХИВА>/dist/manifest.json`
 
 После этого плагин появится в локальных development plugins.
 
