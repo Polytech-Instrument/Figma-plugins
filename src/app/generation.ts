@@ -8,7 +8,7 @@ import {
     A4_H
 } from './config';
 import { getComponentByKey } from './utils';
-import { fillCardData, splitCardByRows } from './card';
+import { fillCardData, buildSplitCards } from './card';
 import { Group } from './types';
 import { updateSaleBannerInfo } from './banner';
 import {
@@ -86,42 +86,67 @@ export async function createBrochure(
             figma.ui.postMessage({ type: 'complete', text: "Остановлено пользователем" });
             throw new Error("Остановлено пользователем");
         }
-        let instance: InstanceNode;
-        try {
-            instance = cardMaster.createInstance();
-        } catch (err) {
-            const fresh = await getComponentByKey(KEY_PRODUCT_CARD);
-            if (!fresh) throw err;
-            cardMaster = fresh;
-            instance = cardMaster.createInstance();
-        }
-        const cardFrame = instance.detachInstance();
-
-        if (group.mainSku) {
-            cardFrame.name = `Card${String(group.mainSku)}`;
-        } else {
-            cardFrame.name = "Unknown SKU";
-        }
-
-        cardFrame.resize(COL_W, cardFrame.height);
-        await fillCardData(cardFrame, group, rowMaster);
-
         const colMaxHForSplit = currentLayout.columns[0].height;
-        let cardsToPlace: FrameNode[] = [cardFrame];
         const currentContentHForSplit = calculateContentHeight(activeColumn);
         const currentGapForSplit = activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0;
         const remainingHForSplit = activeColumn.height - currentContentHForSplit - currentGapForSplit;
-        const hasManyItems = (group.items?.length || 0) > 10;
+        const estimatedCardHeight = estimateCardHeight(group.items?.length || 0);
+        let cardsToPlace: FrameNode[] = [];
         const shouldTrySplit =
-            cardFrame.height > colMaxHForSplit ||
-            (hasManyItems && activeColumn.children.length > 0 && remainingHForSplit < cardFrame.height);
+            estimatedCardHeight > Math.max(0, remainingHForSplit) ||
+            estimatedCardHeight > colMaxHForSplit;
         if (shouldTrySplit) {
             let doSplit = !!opts?.autoSplit;
             if (!doSplit && opts?.askSplit) {
-                doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxHForSplit);
+                doSplit = await opts.askSplit(
+                    group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU",
+                    estimatedCardHeight,
+                    colMaxHForSplit
+                );
             }
             if (doSplit) {
-                cardsToPlace = splitCardByRows(cardFrame, colMaxHForSplit);
+                const firstChunkMaxColH =
+                    activeColumn.children.length > 0 && remainingHForSplit > 0
+                        ? remainingHForSplit
+                        : colMaxHForSplit;
+                cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxHForSplit, firstChunkMaxColH);
+            }
+        }
+
+        if (cardsToPlace.length === 0) {
+            let instance: InstanceNode;
+            try {
+                instance = cardMaster.createInstance();
+            } catch (err) {
+                const fresh = await getComponentByKey(KEY_PRODUCT_CARD);
+                if (!fresh) throw err;
+                cardMaster = fresh;
+                instance = cardMaster.createInstance();
+            }
+            const cardFrame = instance.detachInstance();
+
+            if (group.mainSku) {
+                cardFrame.name = `Card${String(group.mainSku)}`;
+            } else {
+                cardFrame.name = "Unknown SKU";
+            }
+
+            cardFrame.resize(COL_W, cardFrame.height);
+            await fillCardData(cardFrame, group, rowMaster);
+
+            if (cardFrame.height > colMaxHForSplit) {
+                let doSplit = !!opts?.autoSplit;
+                if (!doSplit && opts?.askSplit) {
+                    doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxHForSplit);
+                }
+                if (doSplit) {
+                    cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxHForSplit, colMaxHForSplit);
+                    cardFrame.remove();
+                } else {
+                    cardsToPlace = [cardFrame];
+                }
+            } else {
+                cardsToPlace = [cardFrame];
             }
         }
 
@@ -241,4 +266,12 @@ function resolveShiftPx(value: number): number {
         return Math.round(A4_H * value);
     }
     return Math.round(value);
+}
+
+function estimateCardHeight(itemCount: number): number {
+    const rows = Math.max(0, itemCount);
+    const rowsHeight = rows > 0
+        ? (rows * CONFIG.ESTIMATED_ROW_HEIGHT) + (Math.max(0, rows - 1) * CONFIG.ITEM_GAP)
+        : 0;
+    return CONFIG.MIN_CARD_HEIGHT + rowsHeight;
 }

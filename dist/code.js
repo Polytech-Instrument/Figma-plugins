@@ -12,6 +12,8 @@ var CONFIG = {
   ITEM_GAP: 2,
   COL_W_REDUCE: 20,
   MIN_REMAINING_FOR_SPLIT: 220,
+  MIN_CARD_HEIGHT: 135,
+  ESTIMATED_ROW_HEIGHT: 10,
   FIRST_PAGE_SHIFT_DEFAULT: 1 / 3,
   FIRST_PAGE_SHIFT_TWO_THIRDS: 2 / 3,
   // Node names
@@ -210,7 +212,7 @@ async function fillRowData(row, item, baseDiscountRaw) {
     itemSaleText.characters = normalizeDiscountText(String(item.discount || ""));
   }
 }
-async function fillCardData(card, group, rowMaster) {
+async function fillCardStatic(card, group) {
   card.clipsContent = false;
   const title = card.findOne((n) => n.name === CONFIG.TITLE && n.type === "TEXT");
   if (title) {
@@ -292,11 +294,7 @@ async function fillCardData(card, group, rowMaster) {
       const maxW = 70;
       const limitW = (container == null ? void 0 : container.width) ? Math.min(maxW, container.width) : maxW;
       const limitH = (container == null ? void 0 : container.height) ? container.height : logoNode.height;
-      const scale = Math.min(
-        1,
-        limitW / logoNode.width,
-        limitH / logoNode.height
-      );
+      const scale = Math.min(1, limitW / logoNode.width, limitH / logoNode.height);
       if (scale < 1) {
         logoNode.resizeWithoutConstraints(
           Math.round(logoNode.width * scale),
@@ -314,8 +312,12 @@ async function fillCardData(card, group, rowMaster) {
       console.log("\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0438\u0437\u043C\u0435\u043D\u0438\u0442\u044C \u0440\u0430\u0437\u043C\u0435\u0440 \u043B\u043E\u0433\u043E\u0442\u0438\u043F\u0430:", err);
     }
   }
-  const normalizeName = (s) => s.replace(/[\s#\u00A0]/g, "").toLowerCase();
-  const listCandidates = card.findAll((n) => normalizeName(n.name) === "listcontainer");
+}
+function normalizeNameLocal(name) {
+  return name.replace(/[\s#\u00A0]/g, "").toLowerCase();
+}
+function getOrCreateListFrame(card) {
+  const listCandidates = card.findAll((n) => normalizeNameLocal(n.name) === "listcontainer");
   let listNode = null;
   if (listCandidates.length > 0) {
     const frameCandidates = listCandidates.filter((n) => n.type === "FRAME");
@@ -334,10 +336,10 @@ async function fillCardData(card, group, rowMaster) {
     if (parent && idx >= 0) parent.insertChild(idx, detached);
     listNode = detached;
   }
-  let list = null;
   if (listNode && "children" in listNode) {
-    list = listNode;
-  } else if (listNode && listNode.type === "TEXT" && listNode.parent && "children" in listNode.parent) {
+    return listNode;
+  }
+  if (listNode && listNode.type === "TEXT" && listNode.parent && "children" in listNode.parent) {
     const parent = listNode.parent;
     const idx = parent.children.indexOf(listNode);
     const frame = figma.createFrame();
@@ -348,106 +350,139 @@ async function fillCardData(card, group, rowMaster) {
     frame.fills = [];
     parent.insertChild(Math.max(0, idx), frame);
     listNode.remove();
-    list = frame;
+    return frame;
   }
-  if (list) {
-    if ("layoutMode" in list) {
-      list.layoutMode = "VERTICAL";
-      list.primaryAxisSizingMode = "AUTO";
-      list.counterAxisSizingMode = "FIXED";
-      list.primaryAxisAlignItems = "MIN";
-      list.counterAxisAlignItems = "MIN";
-      list.itemSpacing = CONFIG.ITEM_GAP;
-      list.clipsContent = false;
-    }
-    list.visible = true;
-    list.opacity = 1;
-    if (list.width < 10) {
-      list.resize(card.width, Math.max(1, list.height));
-    }
-    let p = list.parent;
-    while (p && p.type !== "PAGE") {
-      if ("clipsContent" in p) p.clipsContent = false;
-      p = p.parent || null;
-    }
-    for (let i = 0; i < group.items.length; i++) {
-      const item = group.items[i];
-      let rowNode;
-      try {
-        rowNode = rowMaster.createInstance();
-      } catch (err) {
-        const fresh = await getComponentByKey(KEY_ROW_ITEM);
-        if (!fresh) throw err;
-        rowMaster = fresh;
-        rowNode = rowMaster.createInstance();
-      }
-      rowNode.resize(Math.max(list.width, card.width), rowNode.height);
-      rowNode.visible = true;
-      rowNode.opacity = 1;
-      if (list.layoutMode !== "NONE") {
-        rowNode.layoutAlign = "STRETCH";
-      }
-      if (i % 2 !== 0) {
-        rowNode.fills = [{ type: "SOLID", color: { r: 0.96, g: 0.96, b: 0.96 } }];
-      }
-      await fillRowData(rowNode, item, group.discountText || null);
-      list.appendChild(rowNode);
-    }
-  } else {
-    figma.notify("\u041D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D #ListContainer \u0432 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0435", { timeout: 1500 });
+  return null;
+}
+function prepareListFrame(list, card) {
+  list.layoutMode = "VERTICAL";
+  list.primaryAxisSizingMode = "AUTO";
+  list.counterAxisSizingMode = "FIXED";
+  list.primaryAxisAlignItems = "MIN";
+  list.counterAxisAlignItems = "MIN";
+  list.itemSpacing = CONFIG.ITEM_GAP;
+  list.clipsContent = false;
+  list.visible = true;
+  list.opacity = 1;
+  if (list.width < 10) {
+    list.resize(card.width, Math.max(1, list.height));
+  }
+  let p = list.parent;
+  while (p && p.type !== "PAGE") {
+    if ("clipsContent" in p) p.clipsContent = false;
+    p = p.parent || null;
   }
 }
-function splitCardByRows(card, maxColH) {
+async function createFilledRow(rowMaster, item, rowIndex, baseDiscountRaw) {
+  let rowNode;
+  try {
+    rowNode = rowMaster.createInstance();
+  } catch (err) {
+    const fresh = await getComponentByKey(KEY_ROW_ITEM);
+    if (!fresh) throw err;
+    rowMaster = fresh;
+    rowNode = rowMaster.createInstance();
+  }
+  rowNode.resize(COL_W, rowNode.height);
+  rowNode.visible = true;
+  rowNode.opacity = 1;
+  if (rowIndex % 2 !== 0) {
+    rowNode.fills = [{ type: "SOLID", color: { r: 0.96, g: 0.96, b: 0.96 } }];
+  }
+  await fillRowData(rowNode, item, baseDiscountRaw);
+  return rowNode;
+}
+async function appendRowsToCardList(list, card, rowMaster, items, baseDiscountRaw, rowOffset = 0) {
+  prepareListFrame(list, card);
+  for (let i = 0; i < items.length; i++) {
+    const rowNode = await createFilledRow(rowMaster, items[i], rowOffset + i, baseDiscountRaw);
+    if (list.layoutMode !== "NONE") {
+      rowNode.layoutAlign = "STRETCH";
+    }
+    list.appendChild(rowNode);
+  }
+}
+async function fillCardData(card, group, rowMaster) {
+  await fillCardStatic(card, group);
+  const list = getOrCreateListFrame(card);
+  if (!list) {
+    figma.notify("\u041D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D #ListContainer \u0432 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0435", { timeout: 1500 });
+    return;
+  }
+  await appendRowsToCardList(list, card, rowMaster, group.items, group.discountText || null, 0);
+}
+async function buildSplitCards(cardMaster, rowMaster, group, maxColH, firstChunkMaxColH) {
   var _a;
-  const list = findListFrame(card);
-  if (!list) return [card];
-  const headerH = Math.max(0, card.height - list.height);
-  const maxListH = maxColH - headerH;
-  if (maxListH <= 0) return [card];
-  const rows = list.children.filter((n) => n.type === "FRAME" || n.type === "INSTANCE");
-  if (rows.length === 0) return [card];
-  const gap = (_a = list.itemSpacing) != null ? _a : CONFIG.ITEM_GAP;
-  const maxRowsPerChunk = rows.length > 10 ? 10 : Number.POSITIVE_INFINITY;
-  const keepHeaderForAll = rows.length > 10;
+  const baseCard = cardMaster.createInstance().detachInstance();
+  baseCard.name = group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU";
+  baseCard.resize(COL_W, baseCard.height);
+  await fillCardStatic(baseCard, group);
+  const baseList = getOrCreateListFrame(baseCard);
+  if (!baseList) return [baseCard];
+  prepareListFrame(baseList, baseCard);
+  const headerH = Math.max(0, baseCard.height - baseList.height);
+  const firstMaxListH = Math.max(0, (firstChunkMaxColH != null ? firstChunkMaxColH : maxColH) - headerH);
+  const defaultMaxListH = Math.max(0, maxColH - headerH);
+  if (defaultMaxListH <= 0) {
+    await appendRowsToCardList(baseList, baseCard, rowMaster, group.items, group.discountText || null, 0);
+    return [baseCard];
+  }
+  const measuredRows = [];
+  for (let i = 0; i < group.items.length; i++) {
+    measuredRows.push(await createFilledRow(rowMaster, group.items[i], i, group.discountText || null));
+  }
+  const gap = (_a = baseList.itemSpacing) != null ? _a : CONFIG.ITEM_GAP;
+  const keepHeaderForAll = measuredRows.length > 10;
   const chunks = [];
-  let curr = [];
-  let currH = 0;
-  for (const row of rows) {
-    const addGap = curr.length > 0 ? gap : 0;
-    const nextH = currH + addGap + row.height;
-    if (nextH > maxListH && curr.length > 0 || curr.length >= maxRowsPerChunk) {
-      chunks.push(curr);
-      curr = [row];
-      currH = row.height;
+  let currentChunk = [];
+  let currentHeight = 0;
+  let chunkIndex = 0;
+  for (let i = 0; i < measuredRows.length; i++) {
+    const maxListH = chunkIndex === 0 ? firstMaxListH : defaultMaxListH;
+    const addGap = currentChunk.length > 0 ? gap : 0;
+    const nextHeight = currentHeight + addGap + measuredRows[i].height;
+    if (nextHeight > maxListH && currentChunk.length > 0) {
+      chunks.push(currentChunk);
+      currentChunk = [i];
+      currentHeight = measuredRows[i].height;
+      chunkIndex++;
     } else {
-      curr.push(row);
-      currH = nextH;
+      currentChunk.push(i);
+      currentHeight = nextHeight;
     }
   }
-  if (curr.length > 0) chunks.push(curr);
-  if (chunks.length <= 1) return [card];
-  const chunkClones = chunks.map((chunk) => chunk.map((row) => row.clone()));
+  if (currentChunk.length > 0) chunks.push(currentChunk);
+  for (const row of measuredRows) row.remove();
+  if (chunks.length <= 1) {
+    await appendRowsToCardList(baseList, baseCard, rowMaster, group.items, group.discountText || null, 0);
+    return [baseCard];
+  }
   const cards = [];
   for (let i = 0; i < chunks.length; i++) {
-    const cardNode = i === 0 ? card : card.clone();
-    const listNode = findListFrame(cardNode);
-    if (!listNode) {
-      cards.push(cardNode);
+    const card = i === 0 ? baseCard : cardMaster.createInstance().detachInstance();
+    if (i > 0) {
+      card.name = group.mainSku ? `Card${String(group.mainSku)}-p${i + 1}` : `Unknown SKU-p${i + 1}`;
+      card.resize(COL_W, card.height);
+      await fillCardStatic(card, group);
+    }
+    const list = getOrCreateListFrame(card);
+    if (!list) {
+      cards.push(card);
       continue;
     }
-    for (const child of [...listNode.children]) child.remove();
-    for (const row of chunkClones[i]) {
-      listNode.appendChild(row);
-    }
+    prepareListFrame(list, card);
+    for (const child of [...list.children]) child.remove();
+    const chunkItems = chunks[i].map((index) => group.items[index]);
+    await appendRowsToCardList(list, card, rowMaster, chunkItems, group.discountText || null, chunks[i][0] || 0);
     if (i === 0) {
-      const desc = cardNode.findOne((n) => n.name === CONFIG.DESCRIPTION && n.type === "TEXT");
+      const desc = card.findOne((n) => n.name === CONFIG.DESCRIPTION && n.type === "TEXT");
       if (desc) desc.visible = false;
     } else {
-      hideCardHeader(cardNode, keepHeaderForAll);
-      const desc = cardNode.findOne((n) => n.name === CONFIG.DESCRIPTION && n.type === "TEXT");
+      hideCardHeader(card, keepHeaderForAll);
+      const desc = card.findOne((n) => n.name === CONFIG.DESCRIPTION && n.type === "TEXT");
       if (desc) desc.visible = true;
     }
-    cards.push(cardNode);
+    cards.push(card);
   }
   return cards;
 }
@@ -466,17 +501,6 @@ function normalizeDiscountValue(raw) {
   if (!raw) return null;
   const text = normalizeDiscountText(String(raw));
   return text ? text : null;
-}
-function findListFrame(card) {
-  const normalizeName = (s) => s.replace(/[\s#\u00A0]/g, "").toLowerCase();
-  const listCandidates = card.findAll((n) => normalizeName(n.name) === "listcontainer");
-  if (listCandidates.length === 0) return null;
-  const frameCandidates = listCandidates.filter((n) => n.type === "FRAME");
-  if (frameCandidates.length > 0) {
-    frameCandidates.sort((a, b) => b.width * b.height - a.width * a.height);
-    return frameCandidates.find((n) => n.visible) || frameCandidates[0];
-  }
-  return null;
 }
 
 // src/app/banner.ts
@@ -764,7 +788,7 @@ function setupColumnStyle(col, shiftTopPx) {
 
 // src/app/generation.ts
 async function createBrochure(groups, layout, opts) {
-  var _a, _b;
+  var _a, _b, _c;
   figma.notify(`createBrochure: groups=${(groups == null ? void 0 : groups.length) || 0}`, { timeout: 1500 });
   let rowMaster = figma.root.findOne((n) => n.type === "COMPONENT" && n.name === "RowItem");
   let cardMaster = figma.root.findOne((n) => n.type === "COMPONENT" && n.name === "ProductCard");
@@ -785,7 +809,9 @@ async function createBrochure(groups, layout, opts) {
   const compactLayout = !!(layout == null ? void 0 : layout.compactLayout);
   const orderList = Array.isArray(layout == null ? void 0 : layout.orderList) ? layout.orderList : [];
   const startOnSecondPage = giftBlockEnabled && giftBlockMode === "startSecond";
-  const firstPageShift = giftBlockEnabled ? CONFIG.FIRST_PAGE_SHIFT_TWO_THIRDS : CONFIG.FIRST_PAGE_SHIFT_DEFAULT;
+  const firstPageShift = resolveShiftPx(
+    giftBlockEnabled ? CONFIG.FIRST_PAGE_SHIFT_TWO_THIRDS : CONFIG.FIRST_PAGE_SHIFT_DEFAULT
+  );
   let pageNum = startOnSecondPage ? 2 : 1;
   let lastPage = null;
   if (startOnSecondPage) {
@@ -812,36 +838,62 @@ async function createBrochure(groups, layout, opts) {
       figma.ui.postMessage({ type: "complete", text: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C" });
       throw new Error("\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C");
     }
-    let instance;
-    try {
-      instance = cardMaster.createInstance();
-    } catch (err) {
-      const fresh = await getComponentByKey(KEY_PRODUCT_CARD);
-      if (!fresh) throw err;
-      cardMaster = fresh;
-      instance = cardMaster.createInstance();
-    }
-    const cardFrame = instance.detachInstance();
-    if (group.mainSku) {
-      cardFrame.name = `Card${String(group.mainSku)}`;
-    } else {
-      cardFrame.name = "Unknown SKU";
-    }
-    cardFrame.resize(COL_W, cardFrame.height);
-    await fillCardData(cardFrame, group, rowMaster);
     const colMaxHForSplit = currentLayout.columns[0].height;
-    let cardsToPlace = [cardFrame];
-    if (cardFrame.height > colMaxHForSplit) {
+    const currentContentHForSplit = calculateContentHeight(activeColumn);
+    const currentGapForSplit = activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0;
+    const remainingHForSplit = activeColumn.height - currentContentHForSplit - currentGapForSplit;
+    const estimatedCardHeight = estimateCardHeight(((_b = group.items) == null ? void 0 : _b.length) || 0);
+    let cardsToPlace = [];
+    const shouldTrySplit = estimatedCardHeight > Math.max(0, remainingHForSplit) || estimatedCardHeight > colMaxHForSplit;
+    if (shouldTrySplit) {
       let doSplit = !!(opts == null ? void 0 : opts.autoSplit);
       if (!doSplit && (opts == null ? void 0 : opts.askSplit)) {
-        doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxHForSplit);
+        doSplit = await opts.askSplit(
+          group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU",
+          estimatedCardHeight,
+          colMaxHForSplit
+        );
       }
       if (doSplit) {
-        cardsToPlace = splitCardByRows(cardFrame, colMaxHForSplit);
+        const firstChunkMaxColH = activeColumn.children.length > 0 && remainingHForSplit > 0 ? remainingHForSplit : colMaxHForSplit;
+        cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxHForSplit, firstChunkMaxColH);
+      }
+    }
+    if (cardsToPlace.length === 0) {
+      let instance;
+      try {
+        instance = cardMaster.createInstance();
+      } catch (err) {
+        const fresh = await getComponentByKey(KEY_PRODUCT_CARD);
+        if (!fresh) throw err;
+        cardMaster = fresh;
+        instance = cardMaster.createInstance();
+      }
+      const cardFrame = instance.detachInstance();
+      if (group.mainSku) {
+        cardFrame.name = `Card${String(group.mainSku)}`;
+      } else {
+        cardFrame.name = "Unknown SKU";
+      }
+      cardFrame.resize(COL_W, cardFrame.height);
+      await fillCardData(cardFrame, group, rowMaster);
+      if (cardFrame.height > colMaxHForSplit) {
+        let doSplit = !!(opts == null ? void 0 : opts.autoSplit);
+        if (!doSplit && (opts == null ? void 0 : opts.askSplit)) {
+          doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxHForSplit);
+        }
+        if (doSplit) {
+          cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxHForSplit, colMaxHForSplit);
+          cardFrame.remove();
+        } else {
+          cardsToPlace = [cardFrame];
+        }
+      } else {
+        cardsToPlace = [cardFrame];
       }
     }
     for (let i = 0; i < cardsToPlace.length; i++) {
-      if ((_b = opts == null ? void 0 : opts.shouldCancel) == null ? void 0 : _b.call(opts)) {
+      if ((_c = opts == null ? void 0 : opts.shouldCancel) == null ? void 0 : _c.call(opts)) {
         figma.ui.postMessage({ type: "complete", text: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C" });
         throw new Error("\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C");
       }
@@ -940,6 +992,18 @@ function getGroupOrderIndex(group, mainSku, orderIndex) {
     if (idx < best) best = idx;
   }
   return best;
+}
+function resolveShiftPx(value) {
+  if (!Number.isFinite(value)) return 0;
+  if (value >= 0 && value <= 1) {
+    return Math.round(A4_H * value);
+  }
+  return Math.round(value);
+}
+function estimateCardHeight(itemCount) {
+  const rows = Math.max(0, itemCount);
+  const rowsHeight = rows > 0 ? rows * CONFIG.ESTIMATED_ROW_HEIGHT + Math.max(0, rows - 1) * CONFIG.ITEM_GAP : 0;
+  return CONFIG.MIN_CARD_HEIGHT + rowsHeight;
 }
 
 // src/app/update.ts
