@@ -54,6 +54,18 @@ export function getPageColumns(page: FrameNode): FrameNode[] {
     return cols.sort((a, b) => a.x - b.x);
 }
 
+// Reduce columns on the final page so content never occupies footer space.
+export function applyFooterHeightToColumns(page: FrameNode) {
+    const footerTop = A4_H - FOOTER_H;
+    const columns = getPageColumns(page);
+    for (const col of columns) {
+        const targetHeight = Math.max(0, footerTop - col.y);
+        if (Math.round(col.height) !== Math.round(targetHeight)) {
+            col.resize(col.width, targetHeight);
+        }
+    }
+}
+
 // Collect cards that overflow into the footer area.
 export function collectOverflowCards(page: FrameNode, footerTop: number): SceneNode[] {
     const overflow: SceneNode[] = [];
@@ -164,6 +176,7 @@ export function relocateOverflowForFooter(
         currentPageNum = result.pageNum;
     }
 
+    applyFooterHeightToColumns(currentLast);
     return { lastPage: currentLast, pageNum: currentPageNum };
 }
 
@@ -179,7 +192,7 @@ export function createPageWithColumns(num: number, shiftTopPx: number) {
     const leftCol = figma.createFrame();
     leftCol.name = "Left Column";
     leftCol.clipsContent = false;
-    setupColumnStyle(leftCol, shiftTopPx, num === 1 ? "MIN" : "SPACE_BETWEEN");
+    setupColumnStyle(leftCol, shiftTopPx, "MIN");
     leftCol.x = PAD_X;
     leftCol.y = PAD_Y + shiftTopPx;
     page.appendChild(leftCol);
@@ -187,7 +200,7 @@ export function createPageWithColumns(num: number, shiftTopPx: number) {
     const rightCol = figma.createFrame();
     rightCol.name = "Right Column";
     rightCol.clipsContent = false;
-    setupColumnStyle(rightCol, shiftTopPx, num === 1 ? "MIN" : "SPACE_BETWEEN");
+    setupColumnStyle(rightCol, shiftTopPx, "MIN");
     rightCol.x = PAD_X + COL_W + COL_GAP;
     rightCol.y = PAD_Y + shiftTopPx;
     page.appendChild(rightCol);

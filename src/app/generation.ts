@@ -8,7 +8,7 @@ import {
     A4_H
 } from './config';
 import { getComponentByKey } from './utils';
-import { fillCardData, buildSplitCards } from './card';
+import { fillCardData, buildSplitCards, SplitMetrics } from './card';
 import { Group } from './types';
 import { updateSaleBannerInfo } from './banner';
 import {
@@ -20,13 +20,14 @@ import {
     addFooterToPage
 } from './layout';
 
+const PROGRESS_BATCH = 10;
+
 // Generate pages and layout product cards.
 export async function createBrochure(
     groups: Group[],
     layout: { giftBlockEnabled?: boolean; giftBlockMode?: string; compactLayout?: boolean; settings?: any },
     opts?: { autoSplit?: boolean; askSplit?: (cardName: string, cardHeight: number, colHeight: number) => Promise<boolean>; shouldCancel?: () => boolean }
 ) {
-    figma.notify(`createBrochure: groups=${groups?.length || 0}`, { timeout: 1500 });
     let rowMaster = figma.root.findOne(n => n.type === 'COMPONENT' && n.name === 'RowItem') as ComponentNode;
     let cardMaster = figma.root.findOne(n => n.type === 'COMPONENT' && n.name === 'ProductCard') as ComponentNode;
 
@@ -43,10 +44,15 @@ export async function createBrochure(
         cardMaster = await getComponentByKey(KEY_PRODUCT_CARD) as ComponentNode;
     }
 
-    if (!rowMaster) throw new Error("Нет компонента RowItem (локально или в библиотеке)!");
-    if (!cardMaster) throw new Error("Нет компонента ProductCard (локально или в библиотеке)!");
+    if (!rowMaster) throw new Error("Нет компонента RowItem");
+    if (!cardMaster) throw new Error("Нет компонента ProductCard");
 
-    const templateMetrics = measureTemplateMetrics(cardMaster, rowMaster);
+    const splitMetrics: SplitMetrics = {
+        minCardHeight: CONFIG.MIN_CARD_HEIGHT,
+        baseRows: CONFIG.BASE_CARD_ROWS,
+        rowGrowth: CONFIG.ESTIMATED_ROW_HEIGHT
+    };
+
     const giftBlockEnabled = !!layout?.giftBlockEnabled;
     const giftBlockMode = layout?.giftBlockMode || "twoThirds";
     const compactLayout = !!layout?.compactLayout;
@@ -78,70 +84,47 @@ export async function createBrochure(
     let activeColIndex = 0;
     let activeColumn = currentLayout.columns[0];
     const allColumns: FrameNode[] = [...currentLayout.columns];
-    let processed = 0;
 
     const orderedGroups = orderGroupsBySku(groups, orderList);
 
-    for (const group of orderedGroups) {
-        if (opts?.shouldCancel?.()) {
-            figma.ui.postMessage({ type: 'complete', text: "Остановлено пользователем" });
-            throw new Error("Остановлено пользователем");
-        }
-        const colMaxHForSplit = currentLayout.columns[0].height;
-        const currentContentHForSplit = calculateContentHeight(activeColumn);
-        const currentGapForSplit = activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0;
-        const remainingHForSplit = activeColumn.height - currentContentHForSplit - currentGapForSplit;
-        const estimatedCardHeight = estimateCardHeight(group.items?.length || 0, templateMetrics);
+    for (let index = 0; index < orderedGroups.length; index++) {
+        const group = orderedGroups[index];
+        ensureNotCancelled(opts);
+
+        const colMaxH = currentLayout.columns[0].height;
+        const remainingH = getRemainingHeight(activeColumn);
+        const estimatedCardHeight = estimateCardHeight(group.items?.length || 0, splitMetrics);
+        const shouldSplitInPlace =
+            !!opts?.autoSplit &&
+            (
+                (activeColumn.children.length > 0 && estimatedCardHeight > remainingH) ||
+                estimatedCardHeight > colMaxH
+            );
+
         let cardsToPlace: FrameNode[] = [];
-        const shouldTrySplit =
-            (activeColumn.children.length > 0 && estimatedCardHeight > Math.max(0, remainingHForSplit)) ||
-            estimatedCardHeight > colMaxHForSplit;
-        if (shouldTrySplit) {
-            let doSplit = !!opts?.autoSplit;
-            if (!doSplit && opts?.askSplit) {
-                doSplit = await opts.askSplit(
-                    group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU",
-                    estimatedCardHeight,
-                    colMaxHForSplit
-                );
-            }
-            if (doSplit) {
-                const firstChunkMaxColH =
-                    activeColumn.children.length > 0 && remainingHForSplit > 0
-                        ? remainingHForSplit
-                        : colMaxHForSplit;
-                cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxHForSplit, firstChunkMaxColH);
-            }
+        if (shouldSplitInPlace) {
+            const firstChunkMaxColH = activeColumn.children.length > 0
+                ? Math.max(1, remainingH)
+                : colMaxH;
+            cardsToPlace = await buildSplitCards(
+                cardMaster,
+                rowMaster,
+                group,
+                colMaxH,
+                firstChunkMaxColH,
+                splitMetrics
+            );
         }
 
         if (cardsToPlace.length === 0) {
-            let instance: InstanceNode;
-            try {
-                instance = cardMaster.createInstance();
-            } catch (err) {
-                const fresh = await getComponentByKey(KEY_PRODUCT_CARD);
-                if (!fresh) throw err;
-                cardMaster = fresh;
-                instance = cardMaster.createInstance();
-            }
-            const cardFrame = instance.detachInstance();
-
-            if (group.mainSku) {
-                cardFrame.name = `Card${String(group.mainSku)}`;
-            } else {
-                cardFrame.name = "Unknown SKU";
-            }
-
-            cardFrame.resize(COL_W, cardFrame.height);
-            await fillCardData(cardFrame, group, rowMaster);
-
-            if (cardFrame.height > colMaxHForSplit) {
+            const cardFrame = await createProductCard(cardMaster, group, rowMaster);
+            if (cardFrame.height > colMaxH) {
                 let doSplit = !!opts?.autoSplit;
                 if (!doSplit && opts?.askSplit) {
-                    doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxHForSplit);
+                    doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxH);
                 }
                 if (doSplit) {
-                    cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxHForSplit, colMaxHForSplit);
+                    cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxH, colMaxH, splitMetrics);
                     cardFrame.remove();
                 } else {
                     cardsToPlace = [cardFrame];
@@ -152,10 +135,7 @@ export async function createBrochure(
         }
 
         for (let i = 0; i < cardsToPlace.length; i++) {
-            if (opts?.shouldCancel?.()) {
-                figma.ui.postMessage({ type: 'complete', text: "Остановлено пользователем" });
-                throw new Error("Остановлено пользователем");
-            }
+            ensureNotCancelled(opts);
             const card = cardsToPlace[i];
             if (i > 0 && card.name) card.name = `${card.name}-p${i + 1}`;
 
@@ -169,52 +149,33 @@ export async function createBrochure(
                     targetCol = findBestColumn(allColumns, card.height) || newLayout.columns[0];
                 }
                 targetCol.appendChild(card);
-            } else {
-                const currentContentH = calculateContentHeight(activeColumn);
-                const colMaxH = activeColumn.height;
-                const remainingH = colMaxH - currentContentH - (activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0);
-
-                if (card.height > colMaxH && remainingH < MIN_REMAINING_FOR_SPLIT && activeColumn.children.length > 0) {
-                    if (activeColIndex === 0) {
-                        activeColIndex = 1;
-                        activeColumn = currentLayout.columns[1];
-                    } else {
-                        pageNum++;
-                        currentLayout = createPageWithColumns(pageNum, 0);
-                        lastPage = currentLayout.page;
-                        allColumns.push(...currentLayout.columns);
-                        activeColIndex = 0;
-                        activeColumn = currentLayout.columns[0];
-                    }
-                } else {
-                    const newH = currentContentH + CONFIG.ITEM_GAP + card.height;
-                    if (newH > colMaxH && activeColumn.children.length > 0) {
-                        if (activeColIndex === 0) {
-                            activeColIndex = 1;
-                            activeColumn = currentLayout.columns[1];
-                        } else {
-                            pageNum++;
-                            currentLayout = createPageWithColumns(pageNum, 0);
-                            lastPage = currentLayout.page;
-                            allColumns.push(...currentLayout.columns);
-                            activeColIndex = 0;
-                            activeColumn = currentLayout.columns[0];
-                        }
-                    }
-                }
-                activeColumn.appendChild(card);
+                continue;
             }
+
+            if (!canFitInColumn(activeColumn, card.height) && activeColumn.children.length > 0) {
+                if (activeColIndex === 0) {
+                    activeColIndex = 1;
+                    activeColumn = currentLayout.columns[1];
+                } else {
+                    pageNum++;
+                    currentLayout = createPageWithColumns(pageNum, 0);
+                    lastPage = currentLayout.page;
+                    allColumns.push(...currentLayout.columns);
+                    activeColIndex = 0;
+                    activeColumn = currentLayout.columns[0];
+                }
+            }
+            activeColumn.appendChild(card);
         }
 
-        processed++;
-        if (processed % 3 === 0) {
+        if ((index + 1) % PROGRESS_BATCH === 0 || index === orderedGroups.length - 1) {
             figma.ui.postMessage({
                 type: 'progress',
-                curr: processed,
+                curr: index + 1,
                 total: orderedGroups.length,
-                text: `Верстка: ${processed} / ${orderedGroups.length}`
+                text: `Верстка: ${index + 1} / ${orderedGroups.length}`
             });
-            await new Promise(r => setTimeout(r, 10));
+            await yieldToUi();
         }
     }
 
@@ -230,6 +191,23 @@ export async function createBrochure(
     }
 
     figma.ui.postMessage({ type: 'complete', text: "Каталог успешно создан!" });
+}
+
+async function createProductCard(cardMaster: ComponentNode, group: Group, rowMaster: ComponentNode) {
+    let instance: InstanceNode;
+    try {
+        instance = cardMaster.createInstance();
+    } catch (err) {
+        const fresh = await getComponentByKey(KEY_PRODUCT_CARD);
+        if (!fresh) throw err;
+        cardMaster = fresh;
+        instance = cardMaster.createInstance();
+    }
+    const cardFrame = instance.detachInstance();
+    cardFrame.name = group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU";
+    cardFrame.resize(COL_W, cardFrame.height);
+    await fillCardData(cardFrame, group, rowMaster);
+    return cardFrame;
 }
 
 function orderGroupsBySku(groups: Group[], orderList: string[]): Group[] {
@@ -251,7 +229,7 @@ function orderGroupsBySku(groups: Group[], orderList: string[]): Group[] {
 
 function getGroupOrderIndex(group: Group, mainSku: string, orderIndex: Map<string, number>): number {
     let best = orderIndex.has(mainSku) ? orderIndex.get(mainSku)! : Number.MAX_SAFE_INTEGER;
-    const items = (group as any)?.items || [];
+    const items = group.items || [];
     for (const it of items) {
         const sku = it?.sku ? String(it.sku).trim() : "";
         if (!sku) continue;
@@ -269,27 +247,35 @@ function resolveShiftPx(value: number): number {
     return Math.round(value);
 }
 
-function estimateCardHeight(itemCount: number, metrics: { baseHeight: number; rowHeight: number }): number {
+function estimateCardHeight(itemCount: number, metrics: SplitMetrics): number {
     const rows = Math.max(0, itemCount);
-    const rowsHeight = rows > 0
-        ? (rows * metrics.rowHeight) + (Math.max(0, rows - 1) * CONFIG.ITEM_GAP)
-        : 0;
-    return metrics.baseHeight + rowsHeight;
+    if (rows <= metrics.baseRows) return metrics.minCardHeight;
+    return metrics.minCardHeight + ((rows - metrics.baseRows) * metrics.rowGrowth);
 }
 
-function measureTemplateMetrics(cardMaster: ComponentNode, rowMaster: ComponentNode) {
-    const card = cardMaster.createInstance().detachInstance();
-    card.resize(COL_W, card.height);
+function getRemainingHeight(column: FrameNode): number {
+    const currentContentH = calculateContentHeight(column);
+    const gap = column.children.length > 0 ? CONFIG.ITEM_GAP : 0;
+    return column.height - currentContentH - gap;
+}
 
-    const list = card.findOne(n => n.name.replace(/[\s#\u00A0]/g, "").toLowerCase() === "listcontainer") as SceneNode | null;
-    const listHeight = list && "height" in list ? list.height : 0;
-    const baseHeight = Math.max(CONFIG.MIN_CARD_HEIGHT, card.height - listHeight);
-    card.remove();
+function canFitInColumn(column: FrameNode, cardHeight: number): boolean {
+    const remainingH = getRemainingHeight(column);
+    if (cardHeight > column.height && remainingH < MIN_REMAINING_FOR_SPLIT) {
+        return false;
+    }
+    return remainingH >= cardHeight;
+}
 
-    const row = rowMaster.createInstance();
-    row.resize(COL_W, row.height);
-    const rowHeight = Math.max(CONFIG.ESTIMATED_ROW_HEIGHT, row.height);
-    row.remove();
+function ensureNotCancelled(
+    opts?: { shouldCancel?: () => boolean }
+) {
+    if (opts?.shouldCancel?.()) {
+        figma.ui.postMessage({ type: 'complete', text: "Остановлено пользователем" });
+        throw new Error("Остановлено пользователем");
+    }
+}
 
-    return { baseHeight, rowHeight };
+function yieldToUi() {
+    return new Promise(resolve => setTimeout(resolve, 0));
 }

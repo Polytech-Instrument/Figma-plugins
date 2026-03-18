@@ -33,9 +33,27 @@ export function findNodeInRowByName(row: FrameNode | InstanceNode, name: string)
 }
 
 export async function loadFontForNode(node: TextNode) {
-    if (node.fontName !== figma.mixed) {
-        await figma.loadFontAsync(node.fontName as FontName);
+    if (node.fontName === figma.mixed) {
+        const fonts = node.getRangeAllFontNames(0, node.characters.length);
+        const seen = new Set<string>();
+        for (const font of fonts) {
+            const key = `${font.family}__${font.style}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            await loadFontCached(font);
+        }
+        return;
     }
+    await loadFontCached(node.fontName as FontName);
+}
+
+const loadedFonts = new Set<string>();
+
+export async function loadFontCached(fontName: FontName) {
+    const key = `${fontName.family}__${fontName.style}`;
+    if (loadedFonts.has(key)) return;
+    await figma.loadFontAsync(fontName);
+    loadedFonts.add(key);
 }
 
 const libraryComponentCache = new Map<string, ComponentNode>();

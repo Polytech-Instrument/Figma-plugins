@@ -1,6 +1,7 @@
-﻿import { applyConfigOverrides } from './config';
+import { applyConfigOverrides } from './config';
 import { createBrochure } from './generation';
 import { updateInfoOnPage } from './update';
+import { loadFontCached } from './utils';
 
 figma.showUI(__html__, { width: 430, height: 650 });
 
@@ -19,7 +20,6 @@ figma.ui.onmessage = async (msg) => {
     try {
         if (msg.type === 'cancel') {
             cancelRequested = true;
-            figma.notify("Остановка по запросу пользователя...");
             return;
         }
         if (msg.type === 'split-response') {
@@ -61,7 +61,6 @@ figma.ui.onmessage = async (msg) => {
 
 // Load required fonts before text edits.
 async function loadFonts() {
-    await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-    await figma.loadFontAsync({ family: "Inter", style: "Bold" });
+    await loadFontCached({ family: "Inter", style: "Regular" });
+    await loadFontCached({ family: "Inter", style: "Bold" });
 }
-

@@ -10,6 +10,12 @@ import {
 } from './utils';
 import { Group, Variant } from './types';
 
+export type SplitMetrics = {
+    minCardHeight: number;
+    baseRows: number;
+    rowGrowth: number;
+};
+
 // Fill a row with SKU/specs/min/qty/price.
 export async function fillRowData(row: FrameNode | InstanceNode, item: Variant, baseDiscountRaw?: string | null) {
     if (item?.sku) {
@@ -33,7 +39,10 @@ export async function fillRowData(row: FrameNode | InstanceNode, item: Variant, 
     const itemSaleNode = findNodeInRowByName(row, CONFIG.ROW_ITEM_SALE);
     const itemSaleText = findTextInRow(row, CONFIG.ROW_ITEM_SALE_DISCOUNT);
     if (itemSaleNode) itemSaleNode.visible = false;
-    if (itemSaleText) itemSaleText.characters = "";
+    if (itemSaleText) {
+        await loadFontForNode(itemSaleText);
+        itemSaleText.characters = "";
+    }
 
     const baseDiscount = normalizeDiscountValue(baseDiscountRaw);
     const rowDiscount = normalizeDiscountValue(item?.discount);
@@ -45,7 +54,7 @@ export async function fillRowData(row: FrameNode | InstanceNode, item: Variant, 
     }
 }
 
-// Fill static card content without row generation.
+// Fill static card content without rows.
 export async function fillCardStatic(card: FrameNode, group: Group) {
     card.clipsContent = false;
 
@@ -90,6 +99,7 @@ export async function fillCardStatic(card: FrameNode, group: Group) {
             discountInfo.visible = true;
         } else {
             discountInfo.visible = false;
+            discountInfo.characters = "";
         }
     }
 
@@ -122,7 +132,7 @@ export async function fillCardStatic(card: FrameNode, group: Group) {
                 props[propName] = targetVariantName;
                 logoNode.setProperties(props);
             } catch (err) {
-                console.log(`Не удалось переключить бренд для ${group.brandId}. Проверьте имя свойства. Error: ${err}`);
+                console.log(`Не удалось переключить бренд для ${group.brandId}. Error: ${err}`);
             }
         }
         try {
@@ -241,7 +251,14 @@ async function createFilledRow(rowMaster: ComponentNode, item: Variant, rowIndex
     return rowNode;
 }
 
-async function appendRowsToCardList(list: FrameNode, card: FrameNode, rowMaster: ComponentNode, items: Variant[], baseDiscountRaw?: string | null, rowOffset: number = 0) {
+async function appendRowsToCardList(
+    list: FrameNode,
+    card: FrameNode,
+    rowMaster: ComponentNode,
+    items: Variant[],
+    baseDiscountRaw?: string | null,
+    rowOffset: number = 0
+) {
     prepareListFrame(list, card);
     for (let i = 0; i < items.length; i++) {
         const rowNode = await createFilledRow(rowMaster, items[i], rowOffset + i, baseDiscountRaw);
@@ -257,20 +274,27 @@ export async function fillCardData(card: FrameNode, group: Group, rowMaster: Com
     await fillCardStatic(card, group);
     const list = getOrCreateListFrame(card);
     if (!list) {
-        figma.notify("Не найден #ListContainer в карточке", { timeout: 1500 });
+        console.warn("ListContainer not found in ProductCard");
         return;
     }
     await appendRowsToCardList(list, card, rowMaster, group.items, group.discountText || null, 0);
 }
 
-// Build split cards directly without creating a huge populated card first.
+// Build split cards directly from row counts and available height.
 export async function buildSplitCards(
     cardMaster: ComponentNode,
     rowMaster: ComponentNode,
     group: Group,
     maxColH: number,
-    firstChunkMaxColH?: number
+    firstChunkMaxColH?: number,
+    metrics?: SplitMetrics
 ): Promise<FrameNode[]> {
+    const splitMetrics: SplitMetrics = metrics || {
+        minCardHeight: CONFIG.MIN_CARD_HEIGHT,
+        baseRows: CONFIG.BASE_CARD_ROWS,
+        rowGrowth: CONFIG.ESTIMATED_ROW_HEIGHT
+    };
+
     const baseCard = cardMaster.createInstance().detachInstance();
     baseCard.name = group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU";
     baseCard.resize(COL_W, baseCard.height);
@@ -280,43 +304,23 @@ export async function buildSplitCards(
     if (!baseList) return [baseCard];
     prepareListFrame(baseList, baseCard);
 
-    const headerH = Math.max(0, baseCard.height - baseList.height);
-    const firstMaxListH = Math.max(0, (firstChunkMaxColH ?? maxColH) - headerH);
-    const defaultMaxListH = Math.max(0, maxColH - headerH);
-    if (defaultMaxListH <= 0) {
-        await appendRowsToCardList(baseList, baseCard, rowMaster, group.items, group.discountText || null, 0);
-        return [baseCard];
-    }
+    const firstCapacity = Math.max(1, getRowCapacityForHeight(firstChunkMaxColH ?? maxColH, splitMetrics));
+    const defaultCapacity = Math.max(1, getRowCapacityForHeight(maxColH, splitMetrics));
+    const keepHeaderForAll = group.items.length > splitMetrics.baseRows;
 
-    const measuredRows: SceneNode[] = [];
-    for (let i = 0; i < group.items.length; i++) {
-        measuredRows.push(await createFilledRow(rowMaster, group.items[i], i, group.discountText || null));
-    }
-
-    const gap = baseList.itemSpacing ?? CONFIG.ITEM_GAP;
-    const keepHeaderForAll = measuredRows.length > 10;
     const chunks: number[][] = [];
-    let currentChunk: number[] = [];
-    let currentHeight = 0;
-    let chunkIndex = 0;
-
-    for (let i = 0; i < measuredRows.length; i++) {
-        const maxListH = chunkIndex === 0 ? firstMaxListH : defaultMaxListH;
-        const addGap = currentChunk.length > 0 ? gap : 0;
-        const nextHeight = currentHeight + addGap + measuredRows[i].height;
-        if (nextHeight > maxListH && currentChunk.length > 0) {
-            chunks.push(currentChunk);
-            currentChunk = [i];
-            currentHeight = measuredRows[i].height;
-            chunkIndex++;
-        } else {
-            currentChunk.push(i);
-            currentHeight = nextHeight;
+    let cursor = 0;
+    let capacity = firstCapacity;
+    while (cursor < group.items.length) {
+        const nextCursor = Math.min(group.items.length, cursor + capacity);
+        const chunk: number[] = [];
+        for (let i = cursor; i < nextCursor; i++) {
+            chunk.push(i);
         }
+        chunks.push(chunk);
+        cursor = nextCursor;
+        capacity = defaultCapacity;
     }
-    if (currentChunk.length > 0) chunks.push(currentChunk);
-
-    for (const row of measuredRows) row.remove();
 
     if (chunks.length <= 1) {
         await appendRowsToCardList(baseList, baseCard, rowMaster, group.items, group.discountText || null, 0);
@@ -337,6 +341,7 @@ export async function buildSplitCards(
             cards.push(card);
             continue;
         }
+
         prepareListFrame(list, card);
         for (const child of [...list.children]) child.remove();
 
@@ -379,4 +384,12 @@ function normalizeDiscountValue(raw?: string | null): string | null {
     if (!raw) return null;
     const text = normalizeDiscountText(String(raw));
     return text ? text : null;
+}
+
+function getRowCapacityForHeight(height: number, metrics: SplitMetrics): number {
+    if (!Number.isFinite(height) || height <= 0) return 1;
+    if (height <= metrics.minCardHeight) return 1;
+    const extraHeight = height - metrics.minCardHeight;
+    const extraRows = Math.floor(extraHeight / Math.max(1, metrics.rowGrowth));
+    return Math.max(1, metrics.baseRows + extraRows);
 }

@@ -13,7 +13,9 @@ var CONFIG = {
   COL_W_REDUCE: 20,
   MIN_REMAINING_FOR_SPLIT: 220,
   MIN_CARD_HEIGHT: 135,
+  BASE_CARD_ROWS: 6,
   ESTIMATED_ROW_HEIGHT: 10,
+  IMAGE_FETCH_CONCURRENCY: 4,
   FIRST_PAGE_SHIFT_DEFAULT: 1 / 3,
   FIRST_PAGE_SHIFT_TWO_THIRDS: 2 / 3,
   // Node names
@@ -147,9 +149,25 @@ function findNodeInRowByName(row, name) {
   return node || null;
 }
 async function loadFontForNode(node) {
-  if (node.fontName !== figma.mixed) {
-    await figma.loadFontAsync(node.fontName);
+  if (node.fontName === figma.mixed) {
+    const fonts = node.getRangeAllFontNames(0, node.characters.length);
+    const seen = /* @__PURE__ */ new Set();
+    for (const font of fonts) {
+      const key = `${font.family}__${font.style}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      await loadFontCached(font);
+    }
+    return;
   }
+  await loadFontCached(node.fontName);
+}
+var loadedFonts = /* @__PURE__ */ new Set();
+async function loadFontCached(fontName) {
+  const key = `${fontName.family}__${fontName.style}`;
+  if (loadedFonts.has(key)) return;
+  await figma.loadFontAsync(fontName);
+  loadedFonts.add(key);
 }
 var libraryComponentCache = /* @__PURE__ */ new Map();
 async function getComponentByKey(key) {
@@ -202,7 +220,10 @@ async function fillRowData(row, item, baseDiscountRaw) {
   const itemSaleNode = findNodeInRowByName(row, CONFIG.ROW_ITEM_SALE);
   const itemSaleText = findTextInRow(row, CONFIG.ROW_ITEM_SALE_DISCOUNT);
   if (itemSaleNode) itemSaleNode.visible = false;
-  if (itemSaleText) itemSaleText.characters = "";
+  if (itemSaleText) {
+    await loadFontForNode(itemSaleText);
+    itemSaleText.characters = "";
+  }
   const baseDiscount = normalizeDiscountValue(baseDiscountRaw);
   const rowDiscount = normalizeDiscountValue(item == null ? void 0 : item.discount);
   const shouldShow = baseDiscount !== null && rowDiscount !== null && baseDiscount !== rowDiscount;
@@ -252,6 +273,7 @@ async function fillCardStatic(card, group) {
       discountInfo.visible = true;
     } else {
       discountInfo.visible = false;
+      discountInfo.characters = "";
     }
   }
   const imgNode = card.findOne((n) => n.name === CONFIG.IMAGE);
@@ -283,7 +305,7 @@ async function fillCardStatic(card, group) {
         props[propName] = targetVariantName;
         logoNode.setProperties(props);
       } catch (err) {
-        console.log(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0431\u0440\u0435\u043D\u0434 \u0434\u043B\u044F ${group.brandId}. \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u0438\u043C\u044F \u0441\u0432\u043E\u0439\u0441\u0442\u0432\u0430. Error: ${err}`);
+        console.log(`\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u043F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0431\u0440\u0435\u043D\u0434 \u0434\u043B\u044F ${group.brandId}. Error: ${err}`);
       }
     }
     try {
@@ -406,13 +428,17 @@ async function fillCardData(card, group, rowMaster) {
   await fillCardStatic(card, group);
   const list = getOrCreateListFrame(card);
   if (!list) {
-    figma.notify("\u041D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D #ListContainer \u0432 \u043A\u0430\u0440\u0442\u043E\u0447\u043A\u0435", { timeout: 1500 });
+    console.warn("ListContainer not found in ProductCard");
     return;
   }
   await appendRowsToCardList(list, card, rowMaster, group.items, group.discountText || null, 0);
 }
-async function buildSplitCards(cardMaster, rowMaster, group, maxColH, firstChunkMaxColH) {
-  var _a;
+async function buildSplitCards(cardMaster, rowMaster, group, maxColH, firstChunkMaxColH, metrics) {
+  const splitMetrics = metrics || {
+    minCardHeight: CONFIG.MIN_CARD_HEIGHT,
+    baseRows: CONFIG.BASE_CARD_ROWS,
+    rowGrowth: CONFIG.ESTIMATED_ROW_HEIGHT
+  };
   const baseCard = cardMaster.createInstance().detachInstance();
   baseCard.name = group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU";
   baseCard.resize(COL_W, baseCard.height);
@@ -420,39 +446,22 @@ async function buildSplitCards(cardMaster, rowMaster, group, maxColH, firstChunk
   const baseList = getOrCreateListFrame(baseCard);
   if (!baseList) return [baseCard];
   prepareListFrame(baseList, baseCard);
-  const headerH = Math.max(0, baseCard.height - baseList.height);
-  const firstMaxListH = Math.max(0, (firstChunkMaxColH != null ? firstChunkMaxColH : maxColH) - headerH);
-  const defaultMaxListH = Math.max(0, maxColH - headerH);
-  if (defaultMaxListH <= 0) {
-    await appendRowsToCardList(baseList, baseCard, rowMaster, group.items, group.discountText || null, 0);
-    return [baseCard];
-  }
-  const measuredRows = [];
-  for (let i = 0; i < group.items.length; i++) {
-    measuredRows.push(await createFilledRow(rowMaster, group.items[i], i, group.discountText || null));
-  }
-  const gap = (_a = baseList.itemSpacing) != null ? _a : CONFIG.ITEM_GAP;
-  const keepHeaderForAll = measuredRows.length > 10;
+  const firstCapacity = Math.max(1, getRowCapacityForHeight(firstChunkMaxColH != null ? firstChunkMaxColH : maxColH, splitMetrics));
+  const defaultCapacity = Math.max(1, getRowCapacityForHeight(maxColH, splitMetrics));
+  const keepHeaderForAll = group.items.length > splitMetrics.baseRows;
   const chunks = [];
-  let currentChunk = [];
-  let currentHeight = 0;
-  let chunkIndex = 0;
-  for (let i = 0; i < measuredRows.length; i++) {
-    const maxListH = chunkIndex === 0 ? firstMaxListH : defaultMaxListH;
-    const addGap = currentChunk.length > 0 ? gap : 0;
-    const nextHeight = currentHeight + addGap + measuredRows[i].height;
-    if (nextHeight > maxListH && currentChunk.length > 0) {
-      chunks.push(currentChunk);
-      currentChunk = [i];
-      currentHeight = measuredRows[i].height;
-      chunkIndex++;
-    } else {
-      currentChunk.push(i);
-      currentHeight = nextHeight;
+  let cursor = 0;
+  let capacity = firstCapacity;
+  while (cursor < group.items.length) {
+    const nextCursor = Math.min(group.items.length, cursor + capacity);
+    const chunk = [];
+    for (let i = cursor; i < nextCursor; i++) {
+      chunk.push(i);
     }
+    chunks.push(chunk);
+    cursor = nextCursor;
+    capacity = defaultCapacity;
   }
-  if (currentChunk.length > 0) chunks.push(currentChunk);
-  for (const row of measuredRows) row.remove();
   if (chunks.length <= 1) {
     await appendRowsToCardList(baseList, baseCard, rowMaster, group.items, group.discountText || null, 0);
     return [baseCard];
@@ -501,6 +510,13 @@ function normalizeDiscountValue(raw) {
   if (!raw) return null;
   const text = normalizeDiscountText(String(raw));
   return text ? text : null;
+}
+function getRowCapacityForHeight(height, metrics) {
+  if (!Number.isFinite(height) || height <= 0) return 1;
+  if (height <= metrics.minCardHeight) return 1;
+  const extraHeight = height - metrics.minCardHeight;
+  const extraRows = Math.floor(extraHeight / Math.max(1, metrics.rowGrowth));
+  return Math.max(1, metrics.baseRows + extraRows);
 }
 
 // src/app/banner.ts
@@ -664,6 +680,16 @@ function getPageColumns(page) {
   );
   return cols.sort((a, b) => a.x - b.x);
 }
+function applyFooterHeightToColumns(page) {
+  const footerTop = A4_H - FOOTER_H;
+  const columns = getPageColumns(page);
+  for (const col of columns) {
+    const targetHeight = Math.max(0, footerTop - col.y);
+    if (Math.round(col.height) !== Math.round(targetHeight)) {
+      col.resize(col.width, targetHeight);
+    }
+  }
+}
 function collectOverflowCards(page, footerTop) {
   const overflow = [];
   const columns = getPageColumns(page);
@@ -750,6 +776,7 @@ function relocateOverflowForFooter(lastPage, pageNum, compactLayout) {
     currentLast = result.lastPage;
     currentPageNum = result.pageNum;
   }
+  applyFooterHeightToColumns(currentLast);
   return { lastPage: currentLast, pageNum: currentPageNum };
 }
 function createPageWithColumns(num, shiftTopPx) {
@@ -762,14 +789,14 @@ function createPageWithColumns(num, shiftTopPx) {
   const leftCol = figma.createFrame();
   leftCol.name = "Left Column";
   leftCol.clipsContent = false;
-  setupColumnStyle(leftCol, shiftTopPx, num === 1 ? "MIN" : "SPACE_BETWEEN");
+  setupColumnStyle(leftCol, shiftTopPx, "MIN");
   leftCol.x = PAD_X;
   leftCol.y = PAD_Y + shiftTopPx;
   page.appendChild(leftCol);
   const rightCol = figma.createFrame();
   rightCol.name = "Right Column";
   rightCol.clipsContent = false;
-  setupColumnStyle(rightCol, shiftTopPx, num === 1 ? "MIN" : "SPACE_BETWEEN");
+  setupColumnStyle(rightCol, shiftTopPx, "MIN");
   rightCol.x = PAD_X + COL_W + COL_GAP;
   rightCol.y = PAD_Y + shiftTopPx;
   page.appendChild(rightCol);
@@ -787,9 +814,9 @@ function setupColumnStyle(col, shiftTopPx, primaryAxisAlignItems = "SPACE_BETWEE
 }
 
 // src/app/generation.ts
+var PROGRESS_BATCH = 10;
 async function createBrochure(groups, layout, opts) {
-  var _a, _b, _c;
-  figma.notify(`createBrochure: groups=${(groups == null ? void 0 : groups.length) || 0}`, { timeout: 1500 });
+  var _a;
   let rowMaster = figma.root.findOne((n) => n.type === "COMPONENT" && n.name === "RowItem");
   let cardMaster = figma.root.findOne((n) => n.type === "COMPONENT" && n.name === "ProductCard");
   const cardFromKey = await getComponentByKey(KEY_PRODUCT_CARD);
@@ -802,9 +829,13 @@ async function createBrochure(groups, layout, opts) {
   if (!cardMaster || cardMaster.removed) {
     cardMaster = await getComponentByKey(KEY_PRODUCT_CARD);
   }
-  if (!rowMaster) throw new Error("\u041D\u0435\u0442 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u0430 RowItem (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E \u0438\u043B\u0438 \u0432 \u0431\u0438\u0431\u043B\u0438\u043E\u0442\u0435\u043A\u0435)!");
-  if (!cardMaster) throw new Error("\u041D\u0435\u0442 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u0430 ProductCard (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E \u0438\u043B\u0438 \u0432 \u0431\u0438\u0431\u043B\u0438\u043E\u0442\u0435\u043A\u0435)!");
-  const templateMetrics = measureTemplateMetrics(cardMaster, rowMaster);
+  if (!rowMaster) throw new Error("\u041D\u0435\u0442 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u0430 RowItem");
+  if (!cardMaster) throw new Error("\u041D\u0435\u0442 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u0430 ProductCard");
+  const splitMetrics = {
+    minCardHeight: CONFIG.MIN_CARD_HEIGHT,
+    baseRows: CONFIG.BASE_CARD_ROWS,
+    rowGrowth: CONFIG.ESTIMATED_ROW_HEIGHT
+  };
   const giftBlockEnabled = !!(layout == null ? void 0 : layout.giftBlockEnabled);
   const giftBlockMode = (layout == null ? void 0 : layout.giftBlockMode) || "twoThirds";
   const compactLayout = !!(layout == null ? void 0 : layout.compactLayout);
@@ -832,59 +863,35 @@ async function createBrochure(groups, layout, opts) {
   let activeColIndex = 0;
   let activeColumn = currentLayout.columns[0];
   const allColumns = [...currentLayout.columns];
-  let processed = 0;
   const orderedGroups = orderGroupsBySku(groups, orderList);
-  for (const group of orderedGroups) {
-    if ((_a = opts == null ? void 0 : opts.shouldCancel) == null ? void 0 : _a.call(opts)) {
-      figma.ui.postMessage({ type: "complete", text: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C" });
-      throw new Error("\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C");
-    }
-    const colMaxHForSplit = currentLayout.columns[0].height;
-    const currentContentHForSplit = calculateContentHeight(activeColumn);
-    const currentGapForSplit = activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0;
-    const remainingHForSplit = activeColumn.height - currentContentHForSplit - currentGapForSplit;
-    const estimatedCardHeight = estimateCardHeight(((_b = group.items) == null ? void 0 : _b.length) || 0, templateMetrics);
+  for (let index = 0; index < orderedGroups.length; index++) {
+    const group = orderedGroups[index];
+    ensureNotCancelled(opts);
+    const colMaxH = currentLayout.columns[0].height;
+    const remainingH = getRemainingHeight(activeColumn);
+    const estimatedCardHeight = estimateCardHeight(((_a = group.items) == null ? void 0 : _a.length) || 0, splitMetrics);
+    const shouldSplitInPlace = !!(opts == null ? void 0 : opts.autoSplit) && (activeColumn.children.length > 0 && estimatedCardHeight > remainingH || estimatedCardHeight > colMaxH);
     let cardsToPlace = [];
-    const shouldTrySplit = activeColumn.children.length > 0 && estimatedCardHeight > Math.max(0, remainingHForSplit) || estimatedCardHeight > colMaxHForSplit;
-    if (shouldTrySplit) {
-      let doSplit = !!(opts == null ? void 0 : opts.autoSplit);
-      if (!doSplit && (opts == null ? void 0 : opts.askSplit)) {
-        doSplit = await opts.askSplit(
-          group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU",
-          estimatedCardHeight,
-          colMaxHForSplit
-        );
-      }
-      if (doSplit) {
-        const firstChunkMaxColH = activeColumn.children.length > 0 && remainingHForSplit > 0 ? remainingHForSplit : colMaxHForSplit;
-        cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxHForSplit, firstChunkMaxColH);
-      }
+    if (shouldSplitInPlace) {
+      const firstChunkMaxColH = activeColumn.children.length > 0 ? Math.max(1, remainingH) : colMaxH;
+      cardsToPlace = await buildSplitCards(
+        cardMaster,
+        rowMaster,
+        group,
+        colMaxH,
+        firstChunkMaxColH,
+        splitMetrics
+      );
     }
     if (cardsToPlace.length === 0) {
-      let instance;
-      try {
-        instance = cardMaster.createInstance();
-      } catch (err) {
-        const fresh = await getComponentByKey(KEY_PRODUCT_CARD);
-        if (!fresh) throw err;
-        cardMaster = fresh;
-        instance = cardMaster.createInstance();
-      }
-      const cardFrame = instance.detachInstance();
-      if (group.mainSku) {
-        cardFrame.name = `Card${String(group.mainSku)}`;
-      } else {
-        cardFrame.name = "Unknown SKU";
-      }
-      cardFrame.resize(COL_W, cardFrame.height);
-      await fillCardData(cardFrame, group, rowMaster);
-      if (cardFrame.height > colMaxHForSplit) {
+      const cardFrame = await createProductCard(cardMaster, group, rowMaster);
+      if (cardFrame.height > colMaxH) {
         let doSplit = !!(opts == null ? void 0 : opts.autoSplit);
         if (!doSplit && (opts == null ? void 0 : opts.askSplit)) {
-          doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxHForSplit);
+          doSplit = await opts.askSplit(cardFrame.name, cardFrame.height, colMaxH);
         }
         if (doSplit) {
-          cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxHForSplit, colMaxHForSplit);
+          cardsToPlace = await buildSplitCards(cardMaster, rowMaster, group, colMaxH, colMaxH, splitMetrics);
           cardFrame.remove();
         } else {
           cardsToPlace = [cardFrame];
@@ -894,10 +901,7 @@ async function createBrochure(groups, layout, opts) {
       }
     }
     for (let i = 0; i < cardsToPlace.length; i++) {
-      if ((_c = opts == null ? void 0 : opts.shouldCancel) == null ? void 0 : _c.call(opts)) {
-        figma.ui.postMessage({ type: "complete", text: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C" });
-        throw new Error("\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C");
-      }
+      ensureNotCancelled(opts);
       const card = cardsToPlace[i];
       if (i > 0 && card.name) card.name = `${card.name}-p${i + 1}`;
       if (compactLayout) {
@@ -910,50 +914,31 @@ async function createBrochure(groups, layout, opts) {
           targetCol = findBestColumn(allColumns, card.height) || newLayout.columns[0];
         }
         targetCol.appendChild(card);
-      } else {
-        const currentContentH = calculateContentHeight(activeColumn);
-        const colMaxH = activeColumn.height;
-        const remainingH = colMaxH - currentContentH - (activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0);
-        if (card.height > colMaxH && remainingH < MIN_REMAINING_FOR_SPLIT && activeColumn.children.length > 0) {
-          if (activeColIndex === 0) {
-            activeColIndex = 1;
-            activeColumn = currentLayout.columns[1];
-          } else {
-            pageNum++;
-            currentLayout = createPageWithColumns(pageNum, 0);
-            lastPage = currentLayout.page;
-            allColumns.push(...currentLayout.columns);
-            activeColIndex = 0;
-            activeColumn = currentLayout.columns[0];
-          }
-        } else {
-          const newH = currentContentH + CONFIG.ITEM_GAP + card.height;
-          if (newH > colMaxH && activeColumn.children.length > 0) {
-            if (activeColIndex === 0) {
-              activeColIndex = 1;
-              activeColumn = currentLayout.columns[1];
-            } else {
-              pageNum++;
-              currentLayout = createPageWithColumns(pageNum, 0);
-              lastPage = currentLayout.page;
-              allColumns.push(...currentLayout.columns);
-              activeColIndex = 0;
-              activeColumn = currentLayout.columns[0];
-            }
-          }
-        }
-        activeColumn.appendChild(card);
+        continue;
       }
+      if (!canFitInColumn(activeColumn, card.height) && activeColumn.children.length > 0) {
+        if (activeColIndex === 0) {
+          activeColIndex = 1;
+          activeColumn = currentLayout.columns[1];
+        } else {
+          pageNum++;
+          currentLayout = createPageWithColumns(pageNum, 0);
+          lastPage = currentLayout.page;
+          allColumns.push(...currentLayout.columns);
+          activeColIndex = 0;
+          activeColumn = currentLayout.columns[0];
+        }
+      }
+      activeColumn.appendChild(card);
     }
-    processed++;
-    if (processed % 3 === 0) {
+    if ((index + 1) % PROGRESS_BATCH === 0 || index === orderedGroups.length - 1) {
       figma.ui.postMessage({
         type: "progress",
-        curr: processed,
+        curr: index + 1,
         total: orderedGroups.length,
-        text: `\u0412\u0435\u0440\u0441\u0442\u043A\u0430: ${processed} / ${orderedGroups.length}`
+        text: `\u0412\u0435\u0440\u0441\u0442\u043A\u0430: ${index + 1} / ${orderedGroups.length}`
       });
-      await new Promise((r) => setTimeout(r, 10));
+      await yieldToUi();
     }
   }
   if (lastPage) {
@@ -966,6 +951,22 @@ async function createBrochure(groups, layout, opts) {
     await updateSaleBannerInfo(layout.infoMap);
   }
   figma.ui.postMessage({ type: "complete", text: "\u041A\u0430\u0442\u0430\u043B\u043E\u0433 \u0443\u0441\u043F\u0435\u0448\u043D\u043E \u0441\u043E\u0437\u0434\u0430\u043D!" });
+}
+async function createProductCard(cardMaster, group, rowMaster) {
+  let instance;
+  try {
+    instance = cardMaster.createInstance();
+  } catch (err) {
+    const fresh = await getComponentByKey(KEY_PRODUCT_CARD);
+    if (!fresh) throw err;
+    cardMaster = fresh;
+    instance = cardMaster.createInstance();
+  }
+  const cardFrame = instance.detachInstance();
+  cardFrame.name = group.mainSku ? `Card${String(group.mainSku)}` : "Unknown SKU";
+  cardFrame.resize(COL_W, cardFrame.height);
+  await fillCardData(cardFrame, group, rowMaster);
+  return cardFrame;
 }
 function orderGroupsBySku(groups, orderList) {
   if (!orderList || orderList.length === 0) return groups;
@@ -985,7 +986,7 @@ function orderGroupsBySku(groups, orderList) {
 }
 function getGroupOrderIndex(group, mainSku, orderIndex) {
   let best = orderIndex.has(mainSku) ? orderIndex.get(mainSku) : Number.MAX_SAFE_INTEGER;
-  const items = (group == null ? void 0 : group.items) || [];
+  const items = group.items || [];
   for (const it of items) {
     const sku = (it == null ? void 0 : it.sku) ? String(it.sku).trim() : "";
     if (!sku) continue;
@@ -1003,21 +1004,30 @@ function resolveShiftPx(value) {
 }
 function estimateCardHeight(itemCount, metrics) {
   const rows = Math.max(0, itemCount);
-  const rowsHeight = rows > 0 ? rows * metrics.rowHeight + Math.max(0, rows - 1) * CONFIG.ITEM_GAP : 0;
-  return metrics.baseHeight + rowsHeight;
+  if (rows <= metrics.baseRows) return metrics.minCardHeight;
+  return metrics.minCardHeight + (rows - metrics.baseRows) * metrics.rowGrowth;
 }
-function measureTemplateMetrics(cardMaster, rowMaster) {
-  const card = cardMaster.createInstance().detachInstance();
-  card.resize(COL_W, card.height);
-  const list = card.findOne((n) => n.name.replace(/[\s#\u00A0]/g, "").toLowerCase() === "listcontainer");
-  const listHeight = list && "height" in list ? list.height : 0;
-  const baseHeight = Math.max(CONFIG.MIN_CARD_HEIGHT, card.height - listHeight);
-  card.remove();
-  const row = rowMaster.createInstance();
-  row.resize(COL_W, row.height);
-  const rowHeight = Math.max(CONFIG.ESTIMATED_ROW_HEIGHT, row.height);
-  row.remove();
-  return { baseHeight, rowHeight };
+function getRemainingHeight(column) {
+  const currentContentH = calculateContentHeight(column);
+  const gap = column.children.length > 0 ? CONFIG.ITEM_GAP : 0;
+  return column.height - currentContentH - gap;
+}
+function canFitInColumn(column, cardHeight) {
+  const remainingH = getRemainingHeight(column);
+  if (cardHeight > column.height && remainingH < MIN_REMAINING_FOR_SPLIT) {
+    return false;
+  }
+  return remainingH >= cardHeight;
+}
+function ensureNotCancelled(opts) {
+  var _a;
+  if ((_a = opts == null ? void 0 : opts.shouldCancel) == null ? void 0 : _a.call(opts)) {
+    figma.ui.postMessage({ type: "complete", text: "\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C" });
+    throw new Error("\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0435\u043C");
+  }
+}
+function yieldToUi() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 // src/app/update.ts
@@ -1196,7 +1206,6 @@ figma.ui.onmessage = async (msg) => {
   try {
     if (msg.type === "cancel") {
       cancelRequested = true;
-      figma.notify("\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0430 \u043F\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0443 \u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u044F...");
       return;
     }
     if (msg.type === "split-response") {
@@ -1234,6 +1243,6 @@ figma.ui.onmessage = async (msg) => {
   }
 };
 async function loadFonts() {
-  await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-  await figma.loadFontAsync({ family: "Inter", style: "Bold" });
+  await loadFontCached({ family: "Inter", style: "Regular" });
+  await loadFontCached({ family: "Inter", style: "Bold" });
 }

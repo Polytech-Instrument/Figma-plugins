@@ -464,6 +464,7 @@
 const PROXY_BASE = "https://figma-proxy-1.onrender.com/img?url=";
 const API_BASE = "https://ptech.ru/getproductimage.php?article="; 
 const PROXY_HOST = "https://figma-proxy-1.onrender.com";
+const IMAGE_FETCH_CONCURRENCY = 4;
 let proxyWarmPromise = null;
 const imageCache = new Map();
 const SETTINGS_KEY = "ptech_settings_v1";
@@ -867,6 +868,29 @@ async function fetchImageForProduct(sku) {
     }
 }
 
+async function mapWithConcurrency(items, limit, worker, onProgress) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    let completed = 0;
+
+    async function run() {
+        while (nextIndex < items.length) {
+            const current = nextIndex++;
+            results[current] = await worker(items[current], current);
+            completed++;
+            if (onProgress) onProgress(completed, items.length, items[current], current);
+        }
+    }
+
+    const workers = [];
+    const count = Math.max(1, Math.min(limit, items.length));
+    for (let i = 0; i < count; i++) {
+        workers.push(run());
+    }
+    await Promise.all(workers);
+    return results;
+}
+
 // --- ЗАПУСК ГЕНЕРАЦИИ (КНОПКА 1) ---
 async function startGeneration(limitCount = null) {
     const jsonFile = document.getElementById('jsonInput').files[0];
@@ -909,29 +933,47 @@ async function startGeneration(limitCount = null) {
         }
         
         const total = jsonData.length;
-        const processedGroups = [];
         const maxCount = limitCount && Number.isFinite(limitCount) ? Math.min(total, limitCount) : total;
+        const sourceGroups = jsonData.slice(0, maxCount);
 
-        // 3. ЦИКЛ ОБРАБОТКИ
-        for (let i = 0; i < maxCount; i++) {
-            const item = jsonData[i];
-            
-            // Обновляем полоску прогресса
-            // (i + 1) / total * 100
-            updateProgress(i + 1, maxCount, "Обработка данных...", item.title || "Товар");
+        updateProgress(15, 100, "Поднимаем прокси...", "Подготовка к загрузке фото");
+        await ensureProxyWarm();
 
-            // Ищем главный артикул (для картинки и скидки)
-            let mainSku = null;
-            if (item.variants && item.variants.length > 0) {
-                mainSku = item.variants[0].sku;
+        updateProgress(20, 100, "Скачивание фото...", "Пакетная загрузка");
+        const mainSkus = sourceGroups.map(item => (
+            item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null
+        ));
+        const imageResults = await mapWithConcurrency(
+            mainSkus,
+            IMAGE_FETCH_CONCURRENCY,
+            async (sku) => fetchImageForProduct(sku),
+            (completed, count, sku) => {
+                if (completed === count || completed % 5 === 0) {
+                    updateProgress(
+                        20 + Math.round((completed / Math.max(1, count)) * 45),
+                        100,
+                        "Скачивание фото...",
+                        sku ? `Артикул ${sku}` : "Без артикула"
+                    );
+                }
             }
+        );
 
-            // А. Качаем картинку
-            if (i === 0) updateProgress(0, maxCount, "Скачивание фото...", "Первый товар");
-            // (Функция сама сходит на API ptech, получит ссылку и скачает байты через прокси)
-            const imageBytes = await fetchImageForProduct(mainSku);
+        const processedGroups = [];
 
-            // В. Собираем объект для отправки в Figma
+        // 3. СБОРКА ДАННЫХ ДЛЯ FIGMA
+        for (let i = 0; i < sourceGroups.length; i++) {
+            const item = sourceGroups[i];
+            const mainSku = mainSkus[i];
+            const imageBytes = imageResults[i];
+            if (i === sourceGroups.length - 1 || i % 10 === 0) {
+                updateProgress(
+                    65 + Math.round(((i + 1) / Math.max(1, sourceGroups.length)) * 30),
+                    100,
+                    "Сборка каталога...",
+                    item.title || "Товар"
+                );
+            }
             const mainDiscount = mainSku && infoMap[mainSku] ? infoMap[mainSku].discount : null;
             const mainConditions = mainSku && infoMap[mainSku] ? infoMap[mainSku].conditions : null;
             processedGroups.push({
@@ -957,7 +999,7 @@ async function startGeneration(limitCount = null) {
         }
 
         // 4. ЗАВЕРШЕНИЕ
-        updateProgress(100, 100, "Передача данных...", "Отправляем в Figma");
+        updateProgress(98, 100, "Передача данных...", "Отправляем в Figma");
         
         // Небольшая задержка, чтобы глаз успел заметить 100%
         const settings = getSettingsFromUI();
