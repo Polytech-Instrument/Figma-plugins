@@ -1,4 +1,12 @@
-﻿import { CONFIG, KEY_BANNER, KEY_PRODUCT_CARD, KEY_ROW_ITEM, COL_W, MIN_REMAINING_FOR_SPLIT } from './config';
+import {
+    CONFIG,
+    KEY_BANNER,
+    KEY_PRODUCT_CARD,
+    KEY_ROW_ITEM,
+    COL_W,
+    MIN_REMAINING_FOR_SPLIT,
+    A4_H
+} from './config';
 import { getComponentByKey } from './utils';
 import { fillCardData, splitCardByRows } from './card';
 import { Group } from './types';
@@ -43,7 +51,9 @@ export async function createBrochure(
     const compactLayout = !!layout?.compactLayout;
     const orderList: string[] = Array.isArray((layout as any)?.orderList) ? (layout as any).orderList : [];
     const startOnSecondPage = giftBlockEnabled && giftBlockMode === "startSecond";
-    const firstPageShift = giftBlockEnabled ? CONFIG.FIRST_PAGE_SHIFT_TWO_THIRDS : CONFIG.FIRST_PAGE_SHIFT_DEFAULT;
+    const firstPageShift = resolveShiftPx(
+        giftBlockEnabled ? CONFIG.FIRST_PAGE_SHIFT_TWO_THIRDS : CONFIG.FIRST_PAGE_SHIFT_DEFAULT
+    );
 
     let pageNum = startOnSecondPage ? 2 : 1;
     let lastPage: FrameNode | null = null;
@@ -218,9 +228,10 @@ function getGroupOrderIndex(group: Group, mainSku: string, orderIndex: Map<strin
     return best;
 }
 
-
-
-
-
-
-
+function resolveShiftPx(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    if (value >= 0 && value <= 1) {
+        return Math.round(A4_H * value);
+    }
+    return Math.round(value);
+}
