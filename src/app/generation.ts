@@ -46,6 +46,7 @@ export async function createBrochure(
     if (!rowMaster) throw new Error("Нет компонента RowItem (локально или в библиотеке)!");
     if (!cardMaster) throw new Error("Нет компонента ProductCard (локально или в библиотеке)!");
 
+    const templateMetrics = measureTemplateMetrics(cardMaster, rowMaster);
     const giftBlockEnabled = !!layout?.giftBlockEnabled;
     const giftBlockMode = layout?.giftBlockMode || "twoThirds";
     const compactLayout = !!layout?.compactLayout;
@@ -90,10 +91,10 @@ export async function createBrochure(
         const currentContentHForSplit = calculateContentHeight(activeColumn);
         const currentGapForSplit = activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0;
         const remainingHForSplit = activeColumn.height - currentContentHForSplit - currentGapForSplit;
-        const estimatedCardHeight = estimateCardHeight(group.items?.length || 0);
+        const estimatedCardHeight = estimateCardHeight(group.items?.length || 0, templateMetrics);
         let cardsToPlace: FrameNode[] = [];
         const shouldTrySplit =
-            estimatedCardHeight > Math.max(0, remainingHForSplit) ||
+            (activeColumn.children.length > 0 && estimatedCardHeight > Math.max(0, remainingHForSplit)) ||
             estimatedCardHeight > colMaxHForSplit;
         if (shouldTrySplit) {
             let doSplit = !!opts?.autoSplit;
@@ -268,10 +269,27 @@ function resolveShiftPx(value: number): number {
     return Math.round(value);
 }
 
-function estimateCardHeight(itemCount: number): number {
+function estimateCardHeight(itemCount: number, metrics: { baseHeight: number; rowHeight: number }): number {
     const rows = Math.max(0, itemCount);
     const rowsHeight = rows > 0
-        ? (rows * CONFIG.ESTIMATED_ROW_HEIGHT) + (Math.max(0, rows - 1) * CONFIG.ITEM_GAP)
+        ? (rows * metrics.rowHeight) + (Math.max(0, rows - 1) * CONFIG.ITEM_GAP)
         : 0;
-    return CONFIG.MIN_CARD_HEIGHT + rowsHeight;
+    return metrics.baseHeight + rowsHeight;
+}
+
+function measureTemplateMetrics(cardMaster: ComponentNode, rowMaster: ComponentNode) {
+    const card = cardMaster.createInstance().detachInstance();
+    card.resize(COL_W, card.height);
+
+    const list = card.findOne(n => n.name.replace(/[\s#\u00A0]/g, "").toLowerCase() === "listcontainer") as SceneNode | null;
+    const listHeight = list && "height" in list ? list.height : 0;
+    const baseHeight = Math.max(CONFIG.MIN_CARD_HEIGHT, card.height - listHeight);
+    card.remove();
+
+    const row = rowMaster.createInstance();
+    row.resize(COL_W, row.height);
+    const rowHeight = Math.max(CONFIG.ESTIMATED_ROW_HEIGHT, row.height);
+    row.remove();
+
+    return { baseHeight, rowHeight };
 }

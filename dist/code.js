@@ -762,25 +762,25 @@ function createPageWithColumns(num, shiftTopPx) {
   const leftCol = figma.createFrame();
   leftCol.name = "Left Column";
   leftCol.clipsContent = false;
-  setupColumnStyle(leftCol, shiftTopPx);
+  setupColumnStyle(leftCol, shiftTopPx, num === 1 ? "MIN" : "SPACE_BETWEEN");
   leftCol.x = PAD_X;
   leftCol.y = PAD_Y + shiftTopPx;
   page.appendChild(leftCol);
   const rightCol = figma.createFrame();
   rightCol.name = "Right Column";
   rightCol.clipsContent = false;
-  setupColumnStyle(rightCol, shiftTopPx);
+  setupColumnStyle(rightCol, shiftTopPx, num === 1 ? "MIN" : "SPACE_BETWEEN");
   rightCol.x = PAD_X + COL_W + COL_GAP;
   rightCol.y = PAD_Y + shiftTopPx;
   page.appendChild(rightCol);
   return { page, columns: [leftCol, rightCol] };
 }
-function setupColumnStyle(col, shiftTopPx) {
+function setupColumnStyle(col, shiftTopPx, primaryAxisAlignItems = "SPACE_BETWEEN") {
   const maxH = Math.max(0, MAX_COL_H - shiftTopPx);
   col.resize(COL_W, maxH);
   col.layoutMode = "VERTICAL";
   col.primaryAxisSizingMode = "FIXED";
-  col.primaryAxisAlignItems = "SPACE_BETWEEN";
+  col.primaryAxisAlignItems = primaryAxisAlignItems;
   col.counterAxisSizingMode = "FIXED";
   col.itemSpacing = ITEM_GAP;
   col.fills = [];
@@ -804,6 +804,7 @@ async function createBrochure(groups, layout, opts) {
   }
   if (!rowMaster) throw new Error("\u041D\u0435\u0442 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u0430 RowItem (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E \u0438\u043B\u0438 \u0432 \u0431\u0438\u0431\u043B\u0438\u043E\u0442\u0435\u043A\u0435)!");
   if (!cardMaster) throw new Error("\u041D\u0435\u0442 \u043A\u043E\u043C\u043F\u043E\u043D\u0435\u043D\u0442\u0430 ProductCard (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E \u0438\u043B\u0438 \u0432 \u0431\u0438\u0431\u043B\u0438\u043E\u0442\u0435\u043A\u0435)!");
+  const templateMetrics = measureTemplateMetrics(cardMaster, rowMaster);
   const giftBlockEnabled = !!(layout == null ? void 0 : layout.giftBlockEnabled);
   const giftBlockMode = (layout == null ? void 0 : layout.giftBlockMode) || "twoThirds";
   const compactLayout = !!(layout == null ? void 0 : layout.compactLayout);
@@ -842,9 +843,9 @@ async function createBrochure(groups, layout, opts) {
     const currentContentHForSplit = calculateContentHeight(activeColumn);
     const currentGapForSplit = activeColumn.children.length > 0 ? CONFIG.ITEM_GAP : 0;
     const remainingHForSplit = activeColumn.height - currentContentHForSplit - currentGapForSplit;
-    const estimatedCardHeight = estimateCardHeight(((_b = group.items) == null ? void 0 : _b.length) || 0);
+    const estimatedCardHeight = estimateCardHeight(((_b = group.items) == null ? void 0 : _b.length) || 0, templateMetrics);
     let cardsToPlace = [];
-    const shouldTrySplit = estimatedCardHeight > Math.max(0, remainingHForSplit) || estimatedCardHeight > colMaxHForSplit;
+    const shouldTrySplit = activeColumn.children.length > 0 && estimatedCardHeight > Math.max(0, remainingHForSplit) || estimatedCardHeight > colMaxHForSplit;
     if (shouldTrySplit) {
       let doSplit = !!(opts == null ? void 0 : opts.autoSplit);
       if (!doSplit && (opts == null ? void 0 : opts.askSplit)) {
@@ -1000,10 +1001,23 @@ function resolveShiftPx(value) {
   }
   return Math.round(value);
 }
-function estimateCardHeight(itemCount) {
+function estimateCardHeight(itemCount, metrics) {
   const rows = Math.max(0, itemCount);
-  const rowsHeight = rows > 0 ? rows * CONFIG.ESTIMATED_ROW_HEIGHT + Math.max(0, rows - 1) * CONFIG.ITEM_GAP : 0;
-  return CONFIG.MIN_CARD_HEIGHT + rowsHeight;
+  const rowsHeight = rows > 0 ? rows * metrics.rowHeight + Math.max(0, rows - 1) * CONFIG.ITEM_GAP : 0;
+  return metrics.baseHeight + rowsHeight;
+}
+function measureTemplateMetrics(cardMaster, rowMaster) {
+  const card = cardMaster.createInstance().detachInstance();
+  card.resize(COL_W, card.height);
+  const list = card.findOne((n) => n.name.replace(/[\s#\u00A0]/g, "").toLowerCase() === "listcontainer");
+  const listHeight = list && "height" in list ? list.height : 0;
+  const baseHeight = Math.max(CONFIG.MIN_CARD_HEIGHT, card.height - listHeight);
+  card.remove();
+  const row = rowMaster.createInstance();
+  row.resize(COL_W, row.height);
+  const rowHeight = Math.max(CONFIG.ESTIMATED_ROW_HEIGHT, row.height);
+  row.remove();
+  return { baseHeight, rowHeight };
 }
 
 // src/app/update.ts

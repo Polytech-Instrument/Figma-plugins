@@ -179,7 +179,7 @@ export function createPageWithColumns(num: number, shiftTopPx: number) {
     const leftCol = figma.createFrame();
     leftCol.name = "Left Column";
     leftCol.clipsContent = false;
-    setupColumnStyle(leftCol, shiftTopPx);
+    setupColumnStyle(leftCol, shiftTopPx, num === 1 ? "MIN" : "SPACE_BETWEEN");
     leftCol.x = PAD_X;
     leftCol.y = PAD_Y + shiftTopPx;
     page.appendChild(leftCol);
@@ -187,7 +187,7 @@ export function createPageWithColumns(num: number, shiftTopPx: number) {
     const rightCol = figma.createFrame();
     rightCol.name = "Right Column";
     rightCol.clipsContent = false;
-    setupColumnStyle(rightCol, shiftTopPx);
+    setupColumnStyle(rightCol, shiftTopPx, num === 1 ? "MIN" : "SPACE_BETWEEN");
     rightCol.x = PAD_X + COL_W + COL_GAP;
     rightCol.y = PAD_Y + shiftTopPx;
     page.appendChild(rightCol);
@@ -196,12 +196,16 @@ export function createPageWithColumns(num: number, shiftTopPx: number) {
 }
 
 // Configure layout properties for a column.
-export function setupColumnStyle(col: FrameNode, shiftTopPx: number) {
+export function setupColumnStyle(
+    col: FrameNode,
+    shiftTopPx: number,
+    primaryAxisAlignItems: AutoLayoutFrameMixin["primaryAxisAlignItems"] = "SPACE_BETWEEN"
+) {
     const maxH = Math.max(0, MAX_COL_H - shiftTopPx);
     col.resize(COL_W, maxH);
     col.layoutMode = "VERTICAL";
     col.primaryAxisSizingMode = "FIXED";
-    col.primaryAxisAlignItems = "SPACE_BETWEEN";
+    col.primaryAxisAlignItems = primaryAxisAlignItems;
     col.counterAxisSizingMode = "FIXED";
     col.itemSpacing = ITEM_GAP;
     col.fills = [];
