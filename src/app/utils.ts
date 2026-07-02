@@ -68,7 +68,7 @@ export async function getComponentByKey(key: string): Promise<ComponentNode | nu
         libraryComponentCache.set(key, comp as ComponentNode);
         return comp as ComponentNode;
     } catch (err) {
-        console.log("Import by key error:", err);
+        figma.ui.postMessage({ type: "log", text: `Import by key error: ${err}` });
         return null;
     }
 }
@@ -87,4 +87,3 @@ export function normalizeDiscountText(raw: string): string {
     text = text.replace(/%/g, "").trim();
     return text;
 }
-

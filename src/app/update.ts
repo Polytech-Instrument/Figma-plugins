@@ -19,10 +19,10 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
         : Object.values(infoMap).some((v: any) => v?.price && String(v.price).trim() !== "");
     const codes = Object.keys(infoMap);
 
-    console.log("[update-info] payload keys:", Object.keys(payload || {}));
-    console.log("[update-info] updatePrice:", updatePrice);
-    console.log("[update-info] codes count:", codes.length);
-    console.log("[update-info] sample codes:", codes.slice(0, 10));
+    postLog(`[update-info] payload keys: ${Object.keys(payload || {}).join(", ")}`);
+    postLog(`[update-info] updatePrice: ${updatePrice}`);
+    postLog(`[update-info] codes count: ${codes.length}`);
+    postLog(`[update-info] sample codes: ${codes.slice(0, 10).join(", ")}`);
 
     if (codes.length === 0) {
         figma.ui.postMessage({ type: 'complete', text: "Cards not found." });
@@ -36,62 +36,83 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
     const cards = figma.root.findAll(n =>
         (n.type === "FRAME" || n.type === "INSTANCE") && n.name.startsWith("Card")
     ) as (FrameNode | InstanceNode)[];
-    const cardByName = new Map<string, FrameNode | InstanceNode>();
+    const cardsByBaseSku = new Map<string, (FrameNode | InstanceNode)[]>();
     for (const c of cards) {
-        if (c.name) cardByName.set(c.name, c);
+        const baseSku = getBaseSkuFromCardName(c.name);
+        if (!baseSku) continue;
+        const skuCards = cardsByBaseSku.get(baseSku) || [];
+        skuCards.push(c);
+        cardsByBaseSku.set(baseSku, skuCards);
     }
 
-    // Update card-level discounts by Card<SKU>.
+    // Update card-level discounts by Card<SKU>, including split continuation cards.
     for (const code of codes) {
         if (shouldCancel?.()) {
             figma.ui.postMessage({ type: 'complete', text: "Остановлено пользователем" });
             throw new Error("Остановлено пользователем");
         }
-        const cardName = `Card${code}`;
-        const targetCard = cardByName.get(cardName) || null;
+        const targetCards = cardsByBaseSku.get(String(code).trim()) || [];
 
-        if (!targetCard) {
-            console.log("[update-info] card not found for code:", code);
+        if (targetCards.length === 0) {
+            postLog(`[update-info] card not found for code: ${code}`);
             continue;
         }
-        foundCards++;
+        foundCards += targetCards.length;
 
-        const entry = infoMap[code] || {};
-        const newDiscount = entry.discount;
-        const discountLayer = findTextInNode(targetCard, CONFIG.DISCOUNT);
-        const saleStarNode = findNodeInCard(targetCard, CONFIG.SALE_STAR);
-        const discountInfoLayer = findTextInNode(targetCard, CONFIG.DISCOUNT_INFO);
+        for (const targetCard of targetCards) {
+            const entry = infoMap[code] || {};
+            const newDiscount = entry.discount;
+            const discountLayer = findTextInNode(targetCard, CONFIG.DISCOUNT);
+            const saleStarNode = findNodeInCard(targetCard, CONFIG.SALE_STAR);
+            const discountInfoLayer = findTextInNode(targetCard, CONFIG.DISCOUNT_INFO);
+            const surpriseLayer = findTextInNode(targetCard, CONFIG.SURPRISE);
+            const surpriseWrapper = findNodeInCard(targetCard, CONFIG.SURPRISE_WRAPPER);
 
-        if (discountLayer) {
-            await loadFontForNode(discountLayer);
-            const hasDiscount = newDiscount !== undefined && newDiscount !== null && String(newDiscount).trim() !== "";
-            if (hasDiscount) {
-                discountLayer.characters = normalizeDiscountText(String(newDiscount));
-                discountLayer.visible = true;
-                if (saleStarNode) saleStarNode.visible = true;
-                updatedDiscounts++;
+            if (discountLayer) {
+                await loadFontForNode(discountLayer);
+                const hasDiscount = newDiscount !== undefined && newDiscount !== null && String(newDiscount).trim() !== "";
+                if (hasDiscount) {
+                    discountLayer.characters = normalizeDiscountText(String(newDiscount));
+                    discountLayer.visible = true;
+                    if (saleStarNode) saleStarNode.visible = true;
+                    updatedDiscounts++;
+                } else {
+                    discountLayer.visible = false;
+                    if (saleStarNode) saleStarNode.visible = false;
+                }
             } else {
-                discountLayer.visible = false;
-                if (saleStarNode) saleStarNode.visible = false;
+                postLog(`[update-info] discount layer not found in card: ${targetCard.name}`);
             }
-        } else {
-            console.log("[update-info] discount layer not found in card:", targetCard.name);
-        }
-        if (discountInfoLayer) {
-            await loadFontForNode(discountInfoLayer);
-            const cond = entry.conditions;
-            if (cond && String(cond).trim() !== "") {
-                discountInfoLayer.characters = String(cond);
-                discountInfoLayer.visible = true;
-            } else {
-                discountInfoLayer.visible = false;
+            if (discountInfoLayer) {
+                await loadFontForNode(discountInfoLayer);
+                const cond = entry.surpriseText ? "" : entry.conditions;
+                if (cond && String(cond).trim() !== "") {
+                    discountInfoLayer.characters = String(cond);
+                    discountInfoLayer.visible = true;
+                } else {
+                    discountInfoLayer.visible = false;
+                }
+            }
+            if (surpriseLayer) {
+                await loadFontForNode(surpriseLayer);
+                if (entry.surpriseText && String(entry.surpriseText).trim() !== "") {
+                    surpriseLayer.characters = String(entry.surpriseText);
+                    surpriseLayer.visible = true;
+                    if (surpriseWrapper) surpriseWrapper.visible = true;
+                } else {
+                    surpriseLayer.characters = "";
+                    surpriseLayer.visible = false;
+                    if (surpriseWrapper) surpriseWrapper.visible = false;
+                }
+            } else if (surpriseWrapper && !entry.surpriseText) {
+                surpriseWrapper.visible = false;
             }
         }
     }
 
     // Update row prices if price column exists.
     if (updatePrice) {
-        console.log("[update-info] cards for price scan:", cards.length);
+        postLog(`[update-info] cards for price scan: ${cards.length}`);
         for (const card of cards) {
             if (shouldCancel?.()) {
                 figma.ui.postMessage({ type: 'complete', text: "Остановлено пользователем" });
@@ -105,18 +126,20 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
                     figma.ui.postMessage({ type: 'complete', text: "Остановлено пользователем" });
                     throw new Error("Остановлено пользователем");
                 }
-                const priceNode = row.findOne(n => n.name === CONFIG.ROW_PRICE && n.type === 'TEXT') as TextNode;
+                if (!("findOne" in row)) continue;
+                const rowNode = row as FrameNode | InstanceNode;
+                const priceNode = rowNode.findOne(n => n.name === CONFIG.ROW_PRICE && n.type === 'TEXT') as TextNode;
                 if (!priceNode) continue;
 
                 let sku = "";
                 if (row.name) {
                     sku = String(row.name).trim();
                 } else {
-                    const skuNode = row.findOne(n => n.name === CONFIG.ROW_SKU && n.type === 'TEXT') as TextNode;
+                    const skuNode = rowNode.findOne(n => n.name === CONFIG.ROW_SKU && n.type === 'TEXT') as TextNode;
                     if (skuNode?.characters) {
                         sku = skuNode.characters.trim();
                     } else {
-                        const anyText = row.findOne(n => n.type === 'TEXT') as TextNode;
+                        const anyText = rowNode.findOne(n => n.type === 'TEXT') as TextNode;
                         if (anyText?.characters) sku = anyText.characters.trim();
                     }
                 }
@@ -134,9 +157,9 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
     }
 
     // Update per-row discount labels if they differ from card discount.
-    updateRowItemDiscounts(infoMap, cards);
+    await updateRowItemDiscounts(infoMap, cards);
 
-    console.log("[update-info] foundCards:", foundCards, "updatedDiscounts:", updatedDiscounts, "updatedPrices:", updatedPrices);
+    postLog(`[update-info] foundCards: ${foundCards}, updatedDiscounts: ${updatedDiscounts}, updatedPrices: ${updatedPrices}`);
     await updateSaleBannerInfo(infoMap);
     if (foundCards === 0 && updatedPrices === 0) {
         figma.ui.postMessage({ type: 'complete', text: "Cards not found." });
@@ -149,21 +172,23 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
 }
 
 // Show per-row discount labels if they differ from card discount.
-function updateRowItemDiscounts(infoMap: InfoMap, cards: (FrameNode | InstanceNode)[]) {
+async function updateRowItemDiscounts(infoMap: InfoMap, cards: (FrameNode | InstanceNode)[]) {
     for (const card of cards) {
         const list = card.findOne(n => n.name === CONFIG.LIST_CONTAINER && n.type === 'FRAME') as FrameNode;
         if (!list) continue;
 
-        const baseSku = card.name?.startsWith("Card") ? card.name.slice(4) : "";
+        const baseSku = getBaseSkuFromCardName(card.name);
         const baseDiscountRaw = baseSku ? infoMap?.[baseSku]?.discount : null;
         const baseDiscount = discountComparable(baseDiscountRaw);
 
         for (const row of list.children) {
+            if (!("findOne" in row)) continue;
+            const rowNode = row as FrameNode | InstanceNode;
             let sku = "";
             if (row.name) {
                 sku = String(row.name).trim();
             } else {
-                const skuNode = row.findOne(n => n.name === CONFIG.ROW_SKU && n.type === 'TEXT') as TextNode;
+                const skuNode = rowNode.findOne(n => n.name === CONFIG.ROW_SKU && n.type === 'TEXT') as TextNode;
                 if (skuNode?.characters) sku = skuNode.characters.trim();
             }
             if (!sku) continue;
@@ -179,12 +204,19 @@ function updateRowItemDiscounts(infoMap: InfoMap, cards: (FrameNode | InstanceNo
 
             if (itemSaleNode) itemSaleNode.visible = shouldShow;
             if (shouldShow && itemSaleText) {
-                loadFontForNode(itemSaleText).then(() => {
-                    itemSaleText.characters = normalizeDiscountText(String(rowDiscountRaw));
-                });
+                await loadFontForNode(itemSaleText);
+                itemSaleText.characters = normalizeDiscountText(String(rowDiscountRaw));
+            } else if (itemSaleText) {
+                await loadFontForNode(itemSaleText);
+                itemSaleText.characters = "";
             }
         }
     }
+}
+
+function getBaseSkuFromCardName(name?: string): string {
+    if (!name || !name.startsWith("Card")) return "";
+    return name.slice(4).replace(/-p\d+$/i, "").trim();
 }
 
 type DiscountComparable = number | string | null;
@@ -204,4 +236,8 @@ function discountEquals(a: DiscountComparable, b: DiscountComparable): boolean {
     if (a === null || b === null) return false;
     if (typeof a === "number" && typeof b === "number") return a === b;
     return String(a) === String(b);
+}
+
+function postLog(text: string) {
+    figma.ui.postMessage({ type: "log", text });
 }

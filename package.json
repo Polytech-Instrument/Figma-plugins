@@ -1,18 +1,18 @@
 {
     "scripts": {
-        "build": "node scripts/build.js"
+        "build": "node scripts/build.js",
+        "typecheck": "tsc --noEmit"
     },
     "name": "ptech_auto",
     "version": "1.0.0",
-    "main": "index.js",
+    "main": "dist/code.js",
     "keywords": [],
     "author": "",
     "license": "ISC",
     "description": "",
-    "dependencies": {
-        "typescript": "^5.9.3"
-    },
     "devDependencies": {
-        "esbuild": "^0.23.1"
+        "@figma/plugin-typings": "^1.117.0",
+        "esbuild": "^0.28.1",
+        "typescript": "^5.9.3"
     }
 }

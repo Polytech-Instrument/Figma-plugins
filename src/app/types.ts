@@ -13,8 +13,10 @@ export type Group = {
     imageBytes?: Uint8Array | null;
     discountText?: string | null;
     discountInfoText?: string | null;
+    surpriseText?: string | null;
     mainSku?: string | null;
     brandId?: string | null;
+    leafletName?: string | null;
     items: Variant[];
 };
 
@@ -22,7 +24,8 @@ export type InfoEntry = {
     discount?: string;
     price?: string;
     conditions?: string;
+    surpriseText?: string;
+    leafletName?: string;
 };
 
 export type InfoMap = Record<string, InfoEntry>;
-

@@ -1,11 +1,14 @@
 ﻿import { A4_W, A4_H, PAD_X, PAD_Y, COL_GAP, COL_W, ITEM_GAP, MAX_COL_H, FOOTER_H, KEY_FOOTER } from './config';
 import { getComponentByKey } from './utils';
+import { CONFIG } from './config';
+import { PAGINATOR_X, PAGINATOR_Y, KEY_PAGINATOR } from './config';
+import { loadFontForNode, normalizeNameKey } from './utils';
 
 // Calculate total content height in a column.
 export function calculateContentHeight(col: FrameNode): number {
     let h = 0;
     col.children.forEach(child => { h += child.height; });
-    if (col.children.length > 0) h += (col.children.length - 1) * ITEM_GAP;
+    if (col.primaryAxisAlignItems !== "SPACE_BETWEEN" && col.children.length > 0) h += (col.children.length - 1) * ITEM_GAP;
     return h;
 }
 
@@ -15,7 +18,7 @@ export function findBestColumn(columns: FrameNode[], itemH: number): FrameNode |
     let bestRemaining = Infinity;
     for (const col of columns) {
         const currentH = calculateContentHeight(col);
-        const gap = col.children.length > 0 ? ITEM_GAP : 0;
+        const gap = col.children.length > 0 && col.primaryAxisAlignItems !== "SPACE_BETWEEN" ? ITEM_GAP : 0;
         const remaining = col.height - currentH - gap;
         if (remaining >= itemH && remaining < bestRemaining) {
             bestRemaining = remaining;
@@ -38,12 +41,86 @@ export function createBlankPage(num: number) {
 
 // Append footer instance to the page bottom.
 export async function addFooterToPage(page: FrameNode) {
+    if (CONFIG.FOOTER_ENABLED === false) return;
     const footerComp = await getComponentByKey(KEY_FOOTER);
     if (!footerComp) return;
     const footerInstance = (footerComp as ComponentNode).createInstance();
     footerInstance.x = 0;
     footerInstance.y = Math.max(0, A4_H - FOOTER_H);
     page.appendChild(footerInstance);
+}
+
+export async function addPaginatorToPage(page: FrameNode, title: string, pageNumber: number) {
+    if (CONFIG.PAGINATOR_ENABLED === false) return;
+    if (isFirstDocumentPage(page)) return;
+
+    const paginatorComp = await getPaginatorComponent();
+    if (!paginatorComp) {
+        postLog("Paginator component not found");
+        return;
+    }
+    const paginator = paginatorComp.createInstance();
+    paginator.x = 0;
+    paginator.y = 0;
+    resizePaginatorToPageWidth(paginator);
+    await setPaginatorText(paginator, "pageTitle", title);
+    await setPaginatorText(paginator, "pageCounter", `стр. ${pageNumber}`);
+    page.appendChild(paginator);
+}
+
+function isFirstDocumentPage(page: FrameNode): boolean {
+    return Math.round(page.x) === 0 && Math.round(page.y) === 0;
+}
+
+function resizePaginatorToPageWidth(paginator: InstanceNode) {
+    try {
+        paginator.resizeWithoutConstraints(A4_W, paginator.height);
+    } catch {
+        try {
+            paginator.resize(A4_W, paginator.height);
+        } catch (err) {
+            postLog(`Paginator resize error: ${String(err)}`);
+        }
+    }
+}
+
+async function getPaginatorComponent(): Promise<ComponentNode | null> {
+    const byKey = await getComponentByKey(KEY_PAGINATOR);
+    if (byKey) return byKey;
+
+    const localComponent = figma.root.findOne(n =>
+        n.type === "COMPONENT" && normalizeNameKey(n.name || "").includes("paginator")
+    ) as ComponentNode | null;
+    if (localComponent) return localComponent;
+
+    const localSet = figma.root.findOne(n =>
+        n.type === "COMPONENT_SET" && normalizeNameKey(n.name || "").includes("paginator")
+    ) as ComponentSetNode | null;
+    if (localSet?.defaultVariant) return localSet.defaultVariant;
+
+    try {
+        const importer = (figma as any).importComponentSetByKeyAsync;
+        if (typeof importer === "function") {
+            const set = await importer(KEY_PAGINATOR) as ComponentSetNode;
+            return set?.defaultVariant || null;
+        }
+    } catch (err) {
+        postLog(`Import paginator set by key error: ${String(err)}`);
+    }
+
+    return null;
+}
+
+function postLog(text: string) {
+    figma.ui.postMessage({ type: "log", text });
+}
+
+async function setPaginatorText(node: InstanceNode, layerName: string, value: string) {
+    const target = normalizeNameKey(layerName);
+    const text = node.findOne(n => n.type === "TEXT" && normalizeNameKey(n.name || "") === target) as TextNode | null;
+    if (!text) return;
+    await loadFontForNode(text);
+    text.characters = value;
 }
 
 // Collect left/right columns on a page.
@@ -89,8 +166,7 @@ export function collectOverflowCards(page: FrameNode, footerTop: number): SceneN
 // Place overflow cards onto new pages.
 export function layoutCardsOnNewPages(
     cards: SceneNode[],
-    startPageNum: number,
-    compactLayout: boolean
+    startPageNum: number
 ): { lastPage: FrameNode; pageNum: number } {
     let pageNum = startPageNum;
     let currentLayout = createPageWithColumns(pageNum, 0);
@@ -98,40 +174,27 @@ export function layoutCardsOnNewPages(
 
     let activeColIndex = 0;
     let activeColumn = currentLayout.columns[0];
-    const allColumns: FrameNode[] = [...currentLayout.columns];
 
     for (const cardNode of cards) {
         const cardFrame = cardNode as FrameNode;
-        if (compactLayout) {
-            let targetCol = findBestColumn(allColumns, cardFrame.height);
-            if (!targetCol) {
-                pageNum++;
-                const newLayout = createPageWithColumns(pageNum, 0);
-                lastPage = newLayout.page;
-                allColumns.push(...newLayout.columns);
-                targetCol = findBestColumn(allColumns, cardFrame.height) || newLayout.columns[0];
-            }
-            targetCol.appendChild(cardFrame);
-        } else {
-            const currentContentH = calculateContentHeight(activeColumn);
-            const newH = currentContentH + ITEM_GAP + cardFrame.height;
-            const colMaxH = activeColumn.height;
+        const currentContentH = calculateContentHeight(activeColumn);
+        const gap = activeColumn.children.length > 0 && activeColumn.primaryAxisAlignItems !== "SPACE_BETWEEN" ? ITEM_GAP : 0;
+        const newH = currentContentH + gap + cardFrame.height;
+        const colMaxH = activeColumn.height;
 
-            if (newH > colMaxH && activeColumn.children.length > 0) {
-                if (activeColIndex === 0) {
-                    activeColIndex = 1;
-                    activeColumn = currentLayout.columns[1];
-                } else {
-                    pageNum++;
-                    currentLayout = createPageWithColumns(pageNum, 0);
-                    lastPage = currentLayout.page;
-                    allColumns.push(...currentLayout.columns);
-                    activeColIndex = 0;
-                    activeColumn = currentLayout.columns[0];
-                }
+        if (newH > colMaxH && activeColumn.children.length > 0) {
+            if (activeColIndex === 0) {
+                activeColIndex = 1;
+                activeColumn = currentLayout.columns[1];
+            } else {
+                pageNum++;
+                currentLayout = createPageWithColumns(pageNum, 0);
+                lastPage = currentLayout.page;
+                activeColIndex = 0;
+                activeColumn = currentLayout.columns[0];
             }
-            activeColumn.appendChild(cardFrame);
         }
+        activeColumn.appendChild(cardFrame);
     }
 
     return { lastPage, pageNum };
@@ -140,8 +203,7 @@ export function layoutCardsOnNewPages(
 // Move overflow cards until footer area is clear.
 export function relocateOverflowForFooter(
     lastPage: FrameNode,
-    pageNum: number,
-    compactLayout: boolean
+    pageNum: number
 ): { lastPage: FrameNode; pageNum: number } {
     const footerTop = A4_H - FOOTER_H;
     let currentLast = lastPage;
@@ -159,7 +221,7 @@ export function relocateOverflowForFooter(
             for (const col of columns) {
                 const maxH = Math.max(0, footerTop - col.y);
                 const currentH = calculateContentHeight(col);
-                const gap = col.children.length > 0 ? ITEM_GAP : 0;
+                const gap = col.children.length > 0 && col.primaryAxisAlignItems !== "SPACE_BETWEEN" ? ITEM_GAP : 0;
                 const remainingH = maxH - currentH - gap;
                 if (remainingH >= card.height) {
                     col.appendChild(card);
@@ -171,7 +233,7 @@ export function relocateOverflowForFooter(
         }
         if (remaining.length === 0) break;
 
-        const result = layoutCardsOnNewPages(remaining, currentPageNum + 1, compactLayout);
+        const result = layoutCardsOnNewPages(remaining, currentPageNum + 1);
         currentLast = result.lastPage;
         currentPageNum = result.pageNum;
     }
@@ -192,7 +254,7 @@ export function createPageWithColumns(num: number, shiftTopPx: number) {
     const leftCol = figma.createFrame();
     leftCol.name = "Left Column";
     leftCol.clipsContent = false;
-    setupColumnStyle(leftCol, shiftTopPx, "MIN");
+    setupColumnStyle(leftCol, shiftTopPx);
     leftCol.x = PAD_X;
     leftCol.y = PAD_Y + shiftTopPx;
     page.appendChild(leftCol);
@@ -200,7 +262,7 @@ export function createPageWithColumns(num: number, shiftTopPx: number) {
     const rightCol = figma.createFrame();
     rightCol.name = "Right Column";
     rightCol.clipsContent = false;
-    setupColumnStyle(rightCol, shiftTopPx, "MIN");
+    setupColumnStyle(rightCol, shiftTopPx);
     rightCol.x = PAD_X + COL_W + COL_GAP;
     rightCol.y = PAD_Y + shiftTopPx;
     page.appendChild(rightCol);
@@ -212,7 +274,7 @@ export function createPageWithColumns(num: number, shiftTopPx: number) {
 export function setupColumnStyle(
     col: FrameNode,
     shiftTopPx: number,
-    primaryAxisAlignItems: AutoLayoutFrameMixin["primaryAxisAlignItems"] = "SPACE_BETWEEN"
+    primaryAxisAlignItems: AutoLayoutMixin["primaryAxisAlignItems"] = "SPACE_BETWEEN"
 ) {
     const maxH = Math.max(0, MAX_COL_H - shiftTopPx);
     col.resize(COL_W, maxH);
@@ -223,6 +285,3 @@ export function setupColumnStyle(
     col.itemSpacing = ITEM_GAP;
     col.fills = [];
 }
-
-
-

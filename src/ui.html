@@ -311,6 +311,33 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .csv-summary {
+    display: none;
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.06);
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  .csv-summary.show { display: block; }
+  .csv-summary strong { color: var(--text); font-weight: 600; }
+  .log-panel {
+    display: none;
+    max-height: 110px;
+    overflow: auto;
+    padding: 8px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid rgba(0,0,0,0.06);
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.45;
+  }
+  .log-panel.show { display: block; }
+  .hidden { display: none !important; }
 </style>
 
 <div class="bg-orb orb-1"></div>
@@ -324,69 +351,28 @@
 
 <div class="section">
     <h3>1. Генерация Каталога</h3>
+    <div class="csv-summary show" id="jsonSummary"></div>
     <div class="file-block">
-        <div class="inline-row">
-            <div class="inline-block">
-                <label class="toggle-row compact">
-                    <input type="checkbox" id="giftBlockToggle">
-                    Блок подарков
-                </label>
-                <div class="radio-group" id="giftBlockMode">
-                    <label class="radio-item">
-                        <input type="radio" name="giftBlockMode" value="twoThirds" checked>
-                        Сдвиг на 2/3
-                    </label>
-                    <label class="radio-item">
-                        <input type="radio" name="giftBlockMode" value="startSecond">
-                        Со 2 страницы
-                    </label>
-                </div>
-            </div>
-            <label class="toggle-row compact">
-                <input type="checkbox" id="compactLayoutToggle">
-                Компактная верстка
-            </label>
-        </div>
-    </div>
-    <div class="file-block">
-        <span class="label">JSON Товары</span>
-        <div class="dropzone" id="jsonDrop">
-            <div class="drop-title">Перетащите JSON сюда</div>
-            <div class="drop-hint">или кликните, чтобы выбрать файл</div>
-            <input class="drop-file" type="file" id="jsonInput" accept=".json">
-            <div class="drop-filename" id="jsonFileName">Файл не выбран</div>
-        </div>
-    </div>
-    <div class="file-block">
-        <span class="label">Порядок + Скидки (CSV/TXT)</span>
-        <div class="dropzone" id="orderDrop">
-            <div class="drop-title">Перетащите CSV порядка</div>
-            <div class="drop-hint">Код, Скидка без условий, Условия</div>
-            <input class="drop-file" type="file" id="orderInput" accept=".csv,.txt">
-            <div class="drop-filename" id="orderFileName">Файл не выбран</div>
-        </div>
+        <span class="label">Google таблица</span>
+        <select id="googleSheetSelect" style="margin-top: 8px;">
+            <option value="">Загрузка листов...</option>
+        </select>
+        <div class="drop-filename" id="orderFileName">Лист не загружен</div>
+        <div class="csv-summary" id="orderSummary"></div>
     </div>
     <button id="runBtn">Создать каталог</button>
-    <button id="testBtn" class="secondary" style="margin-top: 8px;">Тестовая генерация</button>
-</div>
-
-<hr>
-
-<div class="section">
-    <h3>2. Обновление информации</h3>
-    <p style="font-size: 11px; color: var(--text-dim); margin-bottom: 10px; line-height: 1.4;">
-        Обновит информацию на текущей странице (поиск по имени фрейма = артикулу). Скидки обновляются всегда, цена — если колонка цены есть в таблице.
-    </p>
-    <div class="file-block">
-        <span class="label">CSV Таблица</span>
-        <div class="dropzone" id="csvDrop">
-            <div class="drop-title">Перетащите CSV сюда</div>
-            <div class="drop-hint">или кликните, чтобы выбрать файл</div>
-            <input class="drop-file" type="file" id="csvUpdateInput" accept=".csv">
-            <div class="drop-filename" id="csvFileName">Файл не выбран</div>
-        </div>
+    <button id="updateBtn" class="secondary" style="margin-top: 8px;">Обновить информацию</button>
+    <div id="debugControls">
+        <label class="toggle-row compact" style="margin-top: 8px;">
+            <input type="checkbox" id="skipImagesToggle">
+            Без картинок
+        </label>
+        <button id="testBtn" class="secondary" style="margin-top: 8px;">Тестовая генерация</button>
+        <button id="testLeafletsBtn" class="secondary" style="margin-top: 8px;">Тест по листовкам</button>
+        <button id="validateDataBtn" class="secondary" style="margin-top: 8px;">Проверить данные</button>
+        <button id="checkComponentsBtn" class="secondary" style="margin-top: 8px;">Проверить шаблон</button>
     </div>
-    <button id="updateBtn" class="secondary">Обновить информацию</button>
+    <div id="logPanel" class="log-panel" style="margin-top: 8px;"></div>
 </div>
 
 <div id="progress-overlay">
@@ -450,6 +436,14 @@
                 <input type="checkbox" id="cfgAutoSplit">
                 Авторазбивка длинных карточек
             </label>
+            <label style="font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+                <input type="checkbox" id="cfgPaginatorEnabled">
+                Paginator
+            </label>
+            <label style="font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; margin-top: 6px;">
+                <input type="checkbox" id="cfgFooterEnabled">
+                Footer
+            </label>
         </div>
         <div style="display: flex; gap: 8px; margin-top: 10px;">
             <button id="cfgResetBtn" class="secondary" style="width: 50%;">Сброс</button>
@@ -465,11 +459,27 @@ const PROXY_BASE = "https://figma-proxy-1.onrender.com/img?url=";
 const API_BASE = "https://ptech.ru/getproductimage.php?article="; 
 const PROXY_HOST = "https://figma-proxy-1.onrender.com";
 const IMAGE_FETCH_CONCURRENCY = 4;
+const DEBUG_UI = false;
+const EMBEDDED_PRODUCTS = [];
 let proxyWarmPromise = null;
+let generationCancelled = false;
+let activeAbortController = null;
+let currentJsonCount = null;
+let currentOrderInfoMap = {};
+let googleOrderCsvText = "";
+let googleOrderSheetName = "";
 const imageCache = new Map();
-const SETTINGS_KEY = "ptech_settings_v1";
+const SETTINGS_SCHEMA_VERSION = 2;
+const SETTINGS_KEY = "ptech_settings_v2";
+const LEGACY_SETTINGS_KEYS = ["ptech_settings_v1"];
+const BRAND_IDS = new Set([
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
+    "14", "15", "16", "17", "20", "21", "22", "23", "24", "25", "26",
+    "27", "28", "29", "30", "31", "32"
+]);
 const DEFAULT_SETTINGS = {
-    A4_W: 595,
+    __version: SETTINGS_SCHEMA_VERSION,
+    A4_W: 593,
     A4_H: 842,
     PAD_X: 20,
     PAD_Y: 30,
@@ -480,7 +490,9 @@ const DEFAULT_SETTINGS = {
     FIRST_PAGE_SHIFT_DEFAULT: 1 / 3,
     FIRST_PAGE_SHIFT_TWO_THIRDS: 2 / 3,
     FOOTER_H: 110,
-    AUTO_SPLIT: true
+    AUTO_SPLIT: true,
+    PAGINATOR_ENABLED: true,
+    FOOTER_ENABLED: true
 };
 
 // --- УПРАВЛЕНИЕ UI ---
@@ -499,14 +511,66 @@ function updateProgress(curr, total, text = "", detail = "") {
 }
 
 function disableButtons(disabled) {
-    document.getElementById('runBtn').disabled = disabled;
-    document.getElementById('updateBtn').disabled = disabled;
-    document.getElementById('testBtn').disabled = disabled;
+    setDisabled('runBtn', disabled);
+    setDisabled('updateBtn', disabled);
+    setDisabled('testBtn', disabled);
+    setDisabled('testLeafletsBtn', disabled);
+    setDisabled('validateDataBtn', disabled);
+    setDisabled('checkComponentsBtn', disabled);
     const stopBtn = document.getElementById('stopBtn');
     if (stopBtn) stopBtn.disabled = !disabled;
 }
 
-function setupDropzone(inputId, dropId, labelId) {
+function setDisabled(id, disabled) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+}
+
+function onClick(id, handler) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', handler);
+}
+
+function resetCancellation() {
+    generationCancelled = false;
+    activeAbortController = new AbortController();
+}
+
+function requestCancellation() {
+    generationCancelled = true;
+    if (activeAbortController) activeAbortController.abort();
+    parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+}
+
+function throwIfCancelled() {
+    if (generationCancelled) {
+        throw new Error("Остановлено пользователем");
+    }
+}
+
+function logMessage(text) {
+    const panel = document.getElementById('logPanel');
+    if (!panel) return;
+    const line = document.createElement('div');
+    line.textContent = text;
+    panel.appendChild(line);
+    panel.classList.add('show');
+    panel.scrollTop = panel.scrollHeight;
+}
+
+function clearLog() {
+    const panel = document.getElementById('logPanel');
+    if (!panel) return;
+    panel.innerHTML = "";
+    panel.classList.remove('show');
+}
+
+function showError(message) {
+    logMessage("Ошибка: " + message);
+    updateProgress(0, 1, "Ошибка", message);
+}
+
+function setupDropzone(inputId, dropId, labelId, onFilesChanged = null) {
     const input = document.getElementById(inputId);
     const drop = document.getElementById(dropId);
     const label = document.getElementById(labelId);
@@ -517,7 +581,10 @@ function setupDropzone(inputId, dropId, labelId) {
         label.textContent = file ? file.name : "Файл не выбран";
     }
 
-    input.addEventListener('change', setLabel);
+    input.addEventListener('change', () => {
+        setLabel();
+        if (onFilesChanged) onFilesChanged();
+    });
 
     drop.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -531,6 +598,7 @@ function setupDropzone(inputId, dropId, labelId) {
         if (!files || files.length === 0) return;
         input.files = files;
         setLabel();
+        if (onFilesChanged) onFilesChanged();
     });
 
     setLabel();
@@ -583,7 +651,7 @@ async function ensureProxyWarm() {
             await fetch(PROXY_HOST, { method: "GET" });
         } catch (err) {
             // Даже если статус не доступен, продолжаем; первый запрос к изображениям разбудит прокси
-            console.warn("Proxy warmup failed:", err?.message || err);
+            logMessage("Прокси проснулся не сразу: " + (err?.message || err));
         }
     })();
     return proxyWarmPromise;
@@ -598,9 +666,21 @@ window.onmessage = (e) => {
         // Сообщение вида: "Верстка: 5 / 10"
         updateProgress(msg.curr, msg.total, "Верстка макета...", `Карточка ${msg.curr} из ${msg.total}`);
     }
+
+    if (msg.type === 'log') {
+        logMessage(msg.text);
+    }
     
     if (msg.type === 'complete') {
         updateProgress(100, 100, "Готово!", msg.text);
+        if (msg.report) {
+            logMessage(`Готово: страниц ${msg.report.pages}, листовок ${msg.report.leaflets}`);
+            for (const run of msg.report.runs || []) {
+                logMessage(`${run.title}: страниц ${run.pages}, товаров ${run.products}`);
+            }
+        } else if (msg.text) {
+            logMessage(msg.text);
+        }
         setTimeout(() => {
             disableButtons(false);
             showProgress(false);
@@ -608,9 +688,68 @@ window.onmessage = (e) => {
     }
     
     if (msg.type === 'error') {
-        alert("Ошибка: " + msg.text);
+        showError(msg.text);
         disableButtons(false);
         showProgress(false);
+    }
+
+    if (msg.type === 'components-check-result') {
+        const missing = (msg.results || []).filter(item => !item.ok).map(item => item.name);
+        for (const item of msg.results || []) {
+            logMessage(`${item.ok ? "OK" : "Нет"}: ${item.name}`);
+        }
+        if (missing.length > 0) {
+            showError("Не найдены компоненты: " + missing.join(", "));
+        } else {
+            logMessage("Шаблон проверен: все ключевые компоненты доступны");
+        }
+        disableButtons(false);
+        showProgress(false);
+    }
+
+    if (msg.type === 'google-sheets-result') {
+        const sheets = msg.sheets || [];
+        const select = document.getElementById('googleSheetSelect');
+        if (select) {
+            select.innerHTML = '<option value="">Лист не выбран</option>';
+            for (const sheet of sheets) {
+                const option = document.createElement('option');
+                option.value = String(sheet.gid || "");
+                option.textContent = String(sheet.name || sheet.gid || "");
+                select.appendChild(option);
+            }
+        }
+        logMessage(`Google листов: ${sheets.length}`);
+        if (sheets.length === 0) {
+            showError("Google не вернул листы");
+        } else {
+            updateProgress(100, 100, "Готово", "Листы загружены");
+        }
+        setTimeout(() => {
+            disableButtons(false);
+            showProgress(false);
+        }, 400);
+    }
+
+    if (msg.type === 'google-csv-result') {
+        googleOrderCsvText = msg.csv || "";
+        googleOrderSheetName = msg.sheetName || "";
+        const parsedOrder = parseOrderFileBest([googleOrderCsvText]);
+        currentOrderInfoMap = parsedOrder.infoMap;
+        updateOrderSummary(currentOrderInfoMap, currentJsonCount);
+        const columns = detectCsvColumns(googleOrderCsvText);
+        if (columns) {
+            logMessage(`CSV колонки: код=${columns.code || "-"}, листовка=${columns.leaflet || columns.group || "-"}, цена=${columns.price || "-"}`);
+        }
+        const label = document.getElementById('orderFileName');
+        if (label) label.textContent = `Google: ${googleOrderSheetName || msg.gid || "лист"}`;
+        logMessage(`Загружен лист Google: ${googleOrderSheetName || msg.gid || "лист"}`);
+        logCatalogSheetCheck(getEmbeddedProducts(), parsedOrder);
+        updateProgress(100, 100, "Готово", "CSV загружен");
+        setTimeout(() => {
+            disableButtons(false);
+            showProgress(false);
+        }, 400);
     }
 
     if (msg.type === 'split-query') {
@@ -657,6 +796,10 @@ function applySettingsToUI(settings) {
     setValue('cfgFooterH', settings.FOOTER_H);
     const autoSplitEl = document.getElementById('cfgAutoSplit');
     if (autoSplitEl) autoSplitEl.checked = !!settings.AUTO_SPLIT;
+    const paginatorEl = document.getElementById('cfgPaginatorEnabled');
+    if (paginatorEl) paginatorEl.checked = settings.PAGINATOR_ENABLED !== false;
+    const footerEl = document.getElementById('cfgFooterEnabled');
+    if (footerEl) footerEl.checked = settings.FOOTER_ENABLED !== false;
 }
 
 function getSettingsFromUI() {
@@ -672,15 +815,25 @@ function getSettingsFromUI() {
         FIRST_PAGE_SHIFT_DEFAULT: getNumber('cfgShiftDefault', DEFAULT_SETTINGS.FIRST_PAGE_SHIFT_DEFAULT),
         FIRST_PAGE_SHIFT_TWO_THIRDS: getNumber('cfgShiftTwoThirds', DEFAULT_SETTINGS.FIRST_PAGE_SHIFT_TWO_THIRDS),
         FOOTER_H: getNumber('cfgFooterH', DEFAULT_SETTINGS.FOOTER_H),
-        AUTO_SPLIT: !!document.getElementById('cfgAutoSplit')?.checked
+        AUTO_SPLIT: !!document.getElementById('cfgAutoSplit')?.checked,
+        PAGINATOR_ENABLED: !!document.getElementById('cfgPaginatorEnabled')?.checked,
+        FOOTER_ENABLED: !!document.getElementById('cfgFooterEnabled')?.checked
     };
 }
 
 function loadSettings() {
     try {
         const raw = localStorage.getItem(SETTINGS_KEY);
-        if (!raw) return { ...DEFAULT_SETTINGS };
+        if (!raw) {
+            for (const key of LEGACY_SETTINGS_KEYS) {
+                localStorage.removeItem(key);
+            }
+            return { ...DEFAULT_SETTINGS };
+        }
         const parsed = JSON.parse(raw);
+        if (parsed.__version !== SETTINGS_SCHEMA_VERSION) {
+            return { ...DEFAULT_SETTINGS };
+        }
         return { ...DEFAULT_SETTINGS, ...parsed };
     } catch (e) {
         return { ...DEFAULT_SETTINGS };
@@ -688,7 +841,7 @@ function loadSettings() {
 }
 
 function saveSettings(settings) {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...settings, __version: SETTINGS_SCHEMA_VERSION }));
 }
 
 function openSettings() {
@@ -710,45 +863,10 @@ function readFileAsText(file, encoding = 'utf-8') {
     });
 }
 
-function parseDiscounts(csvText) {
-    const map = {};
-    if (!csvText) return map;
-    const rows = parseCsvAuto(csvText);
-    if (rows.length === 0) return map;
-
-    // По требованию: пропускаем первые 2 строки, в 3-й (или ниже) ищем заголовки
-    let headerIndex = -1;
-    let headers = [];
-    for (let i = 2; i < rows.length; i++) {
-        const cols = rows[i].map(c => normalizeHeader(c));
-        const codeIdx = cols.findIndex(c => c === 'код' || c === 'артикул');
-        if (codeIdx !== -1) {
-            headerIndex = i;
-            headers = cols;
-            break;
-        }
-    }
-    if (headerIndex === -1) return map;
-
-    const codeCol = headers.findIndex(h => h === 'код' || h === 'артикул');
-    const discountCol = headers.findIndex(h => h.includes('скидка'));
-    const priceCol = headers.findIndex(h => h === 'цена' || h.includes('базовая цена'));
-
-    for (let i = headerIndex + 1; i < rows.length; i++) {
-        const cols = rows[i];
-        if (!cols || cols.length === 0) continue;
-        const sku = codeCol !== -1 ? (cols[codeCol] || "").trim() : "";
-        if (!sku) continue;
-        const discount = discountCol !== -1 ? (cols[discountCol] || "").trim() : "";
-        if (discount !== "") map[sku] = discount;
-    }
-    return map;
-}
-
 function parseCsvAuto(text) {
     if (!text) return [];
 
-    const tryDelims = [",", ";"];
+    const tryDelims = ["\t", ";", ","];
     let bestRows = [];
     let bestCols = 0;
 
@@ -802,7 +920,16 @@ function parseCsv(text, delimiter) {
 
 function normalizeHeader(text) {
     if (!text) return "";
-    return text.replace(/^\uFEFF/, "").toLowerCase().replace(/\s+/g, " ").trim();
+    return text
+        .replace(/^\uFEFF/, "")
+        .replace(/\u00A0/g, " ")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function findHeader(headers, matcher) {
+    return headers.findIndex(h => matcher(normalizeHeader(h)));
 }
 
 function parseUpdateInfo(csvText) {
@@ -823,10 +950,16 @@ function parseUpdateInfo(csvText) {
     }
     if (headerIndex === -1) return map;
 
-    const codeCol = headers.findIndex(h => h === 'код');
-    const discountCol = headers.findIndex(h => h === 'скидка без условий');
-    const priceCol = headers.findIndex(h => h === 'базовая цена');
-    const conditionsCol = headers.findIndex(h => h === 'условия');
+    const codeCol = findHeader(headers, h => h === 'код');
+    const discountCol = findHeader(headers, h => h === 'скидка без условий');
+    const priceCol = findHeader(headers, h => h === 'базовая цена');
+    const conditionsCol = findHeader(headers, h => h === 'условия');
+    const leafletCol = findHeader(headers, h =>
+        h === 'название листовки' ||
+        (h.includes('название') && h.includes('листов')) ||
+        h === 'листовка'
+    );
+    const groupCol = findHeader(headers, h => h === 'группа товара');
 
     for (let i = headerIndex + 1; i < rows.length; i++) {
         const cols = rows[i];
@@ -836,25 +969,476 @@ function parseUpdateInfo(csvText) {
         const discount = discountCol !== -1 ? (cols[discountCol] || "").trim() : "";
         const price = priceCol !== -1 ? (cols[priceCol] || "").trim() : "";
         const conditions = conditionsCol !== -1 ? (cols[conditionsCol] || "").trim() : "";
-        map[sku] = { discount, price, conditions };
+        const surpriseText = detectSurpriseText([conditions, discount, cols.join(" ")]);
+        const leafletName = leafletCol !== -1
+            ? (cols[leafletCol] || "").trim()
+            : (groupCol !== -1 ? (cols[groupCol] || "").trim() : "");
+        map[sku] = { discount, price, conditions, surpriseText, leafletName };
     }
     return map;
 }
 
-async function fetchImageForProduct(sku) {
+function detectSurpriseText(values) {
+    const text = values
+        .filter(Boolean)
+        .map(v => String(v))
+        .join(" ")
+        .replace(/\u00A0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!text) return "";
+
+    const normalized = text.toLowerCase();
+    const giftWords = /(подар|бесплат|free|0\s*руб)/i;
+    if (!giftWords.test(normalized)) return "";
+
+    const patterns = [
+        /кажд[а-яё]*\s+(\d{1,3})\s*[-–—]?\s*(?:я|ая|й|ый|ой|ю)?(?=$|[\s.,;:!?)])/i,
+        /(\d{1,3})\s*[-–—]?\s*(?:я|ая|й|ый|ой)(?=$|[\s.,;:!?)]).{0,40}(?:подар|бесплат|free|0\s*руб)/i,
+        /(?:подар|бесплат|free|0\s*руб).{0,40}?(\d{1,3})\s*[-–—]?\s*(?:я|ая|й|ый|ой)?(?=$|[\s.,;:!?)])/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = normalized.match(pattern);
+        if (!match) continue;
+        const count = Number(match[1]);
+        if (Number.isFinite(count) && count > 1 && count < 100) {
+            return `каждая ${count}-я в подарок`;
+        }
+    }
+
+    return "";
+}
+
+function detectCsvColumns(csvText) {
+    const rows = parseCsvAuto(csvText);
+    for (let i = 0; i < rows.length; i++) {
+        const headers = rows[i].map(c => normalizeHeader(c));
+        if (headers.includes('код')) {
+            return {
+                code: headers[findHeader(headers, h => h === 'код')] || "",
+                discount: headers[findHeader(headers, h => h === 'скидка без условий')] || "",
+                price: headers[findHeader(headers, h => h === 'базовая цена')] || "",
+                conditions: headers[findHeader(headers, h => h === 'условия')] || "",
+                leaflet: headers[findHeader(headers, h => h === 'название листовки' || (h.includes('название') && h.includes('листов')) || h === 'листовка')] || "",
+                group: headers[findHeader(headers, h => h === 'группа товара')] || ""
+            };
+        }
+    }
+    return null;
+}
+
+function collectJsonSkus(groups) {
+    const skus = new Set();
+    for (const group of Array.isArray(groups) ? groups : []) {
+        const variants = Array.isArray(group?.variants) ? group.variants : [];
+        for (const variant of variants) {
+            if (variant?.sku) skus.add(String(variant.sku).trim());
+        }
+    }
+    return skus;
+}
+
+function getEmbeddedProducts() {
+    return Array.isArray(EMBEDDED_PRODUCTS) ? EMBEDDED_PRODUCTS : [];
+}
+
+function buildProductSkuIndex(products) {
+    const index = new Map();
+    for (const item of Array.isArray(products) ? products : []) {
+        const variants = Array.isArray(item?.variants) ? item.variants : [];
+        for (const variant of variants) {
+            const sku = variant?.sku ? String(variant.sku).trim() : "";
+            if (sku && !index.has(sku)) index.set(sku, { item, variant });
+        }
+    }
+    return index;
+}
+
+function selectProductsByOrder(products, orderList) {
+    if (!Array.isArray(orderList) || orderList.length === 0) return [];
+    const index = buildProductSkuIndex(products);
+    const selected = [];
+    const seen = new Set();
+    for (const rawSku of orderList) {
+        const sku = String(rawSku || "").trim();
+        const match = index.get(sku);
+        if (!match) continue;
+        const key = sku;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        selected.push({
+            ...match.item,
+            id: `${match.item?.id || "product"}:${sku}`,
+            variants: [match.variant]
+        });
+    }
+    return selected;
+}
+
+function summarizeSkuDiff(jsonSkus, infoMap) {
+    const csvSkus = new Set(Object.keys(infoMap || {}).map(s => String(s).trim()));
+    let csvMissingInJson = 0;
+    let jsonMissingInCsv = 0;
+    for (const sku of csvSkus) {
+        if (!jsonSkus.has(sku)) csvMissingInJson++;
+    }
+    for (const sku of jsonSkus) {
+        if (!csvSkus.has(sku)) jsonMissingInCsv++;
+    }
+    return { csvMissingInJson, jsonMissingInCsv };
+}
+
+function pickLeafletTestGroups(jsonData, infoMap, maxPerLeaflet = 2) {
+    const selected = [];
+    const counts = new Map();
+    for (const item of Array.isArray(jsonData) ? jsonData : []) {
+        const mainSku = item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null;
+        const leafletName = resolveLeafletName(mainSku, item, infoMap).trim();
+        if (!leafletName) continue;
+        const key = normalizeLeafletKey(leafletName);
+        const current = counts.get(key) || 0;
+        if (current >= maxPerLeaflet) continue;
+        selected.push(item);
+        counts.set(key, current + 1);
+    }
+    return selected.length > 0 ? selected : (Array.isArray(jsonData) ? jsonData.slice(0, 10) : []);
+}
+
+function normalizeLeafletKey(value) {
+    return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function addLeafletCount(map, rawName, count = 1) {
+    const key = normalizeLeafletKey(rawName);
+    if (!key) return;
+    const current = map.get(key) || { title: String(rawName || "").replace(/\s+/g, " ").trim(), count: 0 };
+    current.count += count;
+    map.set(key, current);
+}
+
+function buildLeafletCounts(sourceGroups, infoMap) {
+    const leafletCounts = new Map();
+    let withoutLeaflet = 0;
+    for (const item of Array.isArray(sourceGroups) ? sourceGroups : []) {
+        const mainSku = item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null;
+        const leafletName = resolveLeafletName(mainSku, item, infoMap);
+        if (leafletName) addLeafletCount(leafletCounts, leafletName);
+        else withoutLeaflet++;
+    }
+    return { leafletCounts, withoutLeaflet };
+}
+
+function estimateCardHeightForItem(item) {
+    const rows = Array.isArray(item?.variants) ? item.variants.length : 0;
+    const minCardHeight = 135;
+    const baseRows = 6;
+    const rowGrowth = 10;
+    if (rows <= baseRows) return minCardHeight;
+    return minCardHeight + ((rows - baseRows) * rowGrowth);
+}
+
+function estimatePagesForGroups(groups, settings, useCoverShift) {
+    const a4h = Number(settings?.A4_H) || DEFAULT_SETTINGS.A4_H;
+    const padY = Number(settings?.PAD_Y) || DEFAULT_SETTINGS.PAD_Y;
+    const shift = useCoverShift ? Math.round(a4h * (Number(settings?.FIRST_PAGE_SHIFT_DEFAULT) || DEFAULT_SETTINGS.FIRST_PAGE_SHIFT_DEFAULT)) : 0;
+    const itemGap = Number(settings?.ITEM_GAP) || 0;
+    let pages = 1;
+    let colIndex = 0;
+    let colHeights = [shift, shift];
+    const maxH = Math.max(1, a4h - (padY * 2));
+    for (const item of groups) {
+        const cardH = estimateCardHeightForItem(item);
+        const need = cardH + (colHeights[colIndex] > shift ? itemGap : 0);
+        if (colHeights[colIndex] + need > maxH) {
+            if (colIndex === 0) {
+                colIndex = 1;
+            } else {
+                pages++;
+                colIndex = 0;
+                colHeights = [0, 0];
+            }
+        }
+        colHeights[colIndex] += cardH + (colHeights[colIndex] > 0 ? itemGap : 0);
+    }
+    return pages;
+}
+
+function logLeafletPreviewAndPageEstimate(sourceGroups, infoMap) {
+    const { leafletCounts, withoutLeaflet } = buildLeafletCounts(sourceGroups, infoMap);
+    const settings = getSettingsFromUI();
+    logMessage("Листовки:");
+    logMessage(`  Общая: ${sourceGroups.length} товаров, примерно ${estimatePagesForGroups(sourceGroups, settings, true)} стр.`);
+    for (const { title, count } of [...leafletCounts.values()].sort((a, b) => a.title.localeCompare(b.title, "ru"))) {
+        const groups = sourceGroups.filter(item => {
+            const mainSku = item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null;
+            return normalizeLeafletKey(resolveLeafletName(mainSku, item, infoMap)) === normalizeLeafletKey(title);
+        });
+        logMessage(`  ${title}: ${count} товаров, примерно ${estimatePagesForGroups(groups, settings, false)} стр.`);
+    }
+    if (withoutLeaflet > 0) logMessage(`  Без листовки: ${withoutLeaflet}`);
+}
+
+function logPreflight(jsonData, infoMap, sourceGroups) {
+    const jsonSkus = collectJsonSkus(jsonData);
+    const diff = summarizeSkuDiff(jsonSkus, infoMap);
+    const { leafletCounts } = buildLeafletCounts(sourceGroups, infoMap);
+    let surpriseCount = 0;
+    for (const item of sourceGroups) {
+        const mainSku = item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null;
+        if (resolveSurpriseText(mainSku, item, infoMap)) surpriseCount++;
+    }
+    logMessage(`JSON товаров: ${Array.isArray(jsonData) ? jsonData.length : 0}, к генерации: ${sourceGroups.length}`);
+    logMessage(`CSV строк: ${Object.keys(infoMap || {}).length}, листовок в текущем наборе: ${leafletCounts.size}`);
+    logLeafletPreviewAndPageEstimate(sourceGroups, infoMap);
+    if (surpriseCount > 0) logMessage(`Подарочные условия: ${surpriseCount}`);
+    if (diff.csvMissingInJson || diff.jsonMissingInCsv) {
+        logMessage(`Сверка SKU: в CSV не в JSON ${diff.csvMissingInJson}, в JSON не в CSV ${diff.jsonMissingInCsv}`);
+    }
+}
+
+function hasDiscountForItem(mainSku, item, infoMap) {
+    if (mainSku && String(infoMap?.[mainSku]?.discount || "").trim()) return true;
+    const variants = Array.isArray(item?.variants) ? item.variants : [];
+    return variants.some(variant => {
+        const sku = variant?.sku;
+        return sku && String(infoMap?.[sku]?.discount || "").trim();
+    });
+}
+
+function getProblemSku(mainSku, item) {
+    if (mainSku) return String(mainSku);
+    const variants = Array.isArray(item?.variants) ? item.variants : [];
+    const firstSku = variants.find(variant => variant?.sku)?.sku;
+    return firstSku ? String(firstSku) : (item?.title || "без артикула");
+}
+
+function collectDataProblems(jsonData, infoMap, sourceGroups, imageResults = null) {
+    const jsonSkus = collectJsonSkus(jsonData);
+    const csvSkus = new Set(Object.keys(infoMap || {}).map(s => String(s).trim()).filter(Boolean));
+    const problems = {
+        noPhoto: [],
+        noDiscount: [],
+        noLeaflet: [],
+        unknownBrand: [],
+        jsonMissingInCsv: [],
+        csvMissingInJson: []
+    };
+    for (const sku of jsonSkus) {
+        if (!csvSkus.has(sku)) problems.jsonMissingInCsv.push(sku);
+    }
+    for (const sku of csvSkus) {
+        if (!jsonSkus.has(sku)) problems.csvMissingInJson.push(sku);
+    }
+    const groups = Array.isArray(sourceGroups) ? sourceGroups : [];
+    for (let i = 0; i < groups.length; i++) {
+        const item = groups[i];
+        const mainSku = item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null;
+        const label = getProblemSku(mainSku, item);
+        if (imageResults && !imageResults[i]) problems.noPhoto.push(label);
+        if (!hasDiscountForItem(mainSku, item, infoMap)) problems.noDiscount.push(label);
+        if (!resolveLeafletName(mainSku, item, infoMap)) problems.noLeaflet.push(label);
+        const brand = item?.brand !== undefined && item?.brand !== null ? String(item.brand) : "";
+        if (brand && !BRAND_IDS.has(brand)) problems.unknownBrand.push(`${label} (brand ${brand})`);
+    }
+    return problems;
+}
+
+function logProblemList(title, items) {
+    logMessage(`${title}: ${items.length}`);
+    if (items.length > 0) {
+        logMessage(`  ${items.slice(0, 20).join(", ")}${items.length > 20 ? " ..." : ""}`);
+    }
+}
+
+function logDataProblemReport(jsonData, infoMap, sourceGroups, imageResults = null) {
+    const problems = collectDataProblems(jsonData, infoMap, sourceGroups, imageResults);
+    logMessage("Отчет по проблемам:");
+    if (imageResults) {
+        logProblemList("Без фото", problems.noPhoto);
+    } else {
+        logMessage("Без фото: не проверялось");
+    }
+    logProblemList("Без скидки в CSV", problems.noDiscount);
+    logProblemList("Без листовки", problems.noLeaflet);
+    logProblemList("Неизвестный бренд", problems.unknownBrand);
+    logProblemList("JSON SKU без строки CSV", problems.jsonMissingInCsv);
+    logProblemList("CSV SKU без товара JSON", problems.csvMissingInJson);
+}
+
+function logCatalogSheetCheck(products, parsedOrder) {
+    const orderList = parsedOrder?.orderList || [];
+    const infoMap = parsedOrder?.infoMap || {};
+    const sourceGroups = selectProductsByOrder(products, orderList);
+    logPreflight(products, infoMap, sourceGroups);
+    logDataProblemReport(products, infoMap, sourceGroups, null);
+}
+
+function countLeafletNames(infoMap) {
+    let count = 0;
+    for (const entry of Object.values(infoMap || {})) {
+        if (String(entry?.leafletName || "").trim()) count++;
+    }
+    return count;
+}
+
+function parseOrderFileBest(texts) {
+    let best = { orderList: [], infoMap: {}, score: -1 };
+    for (const text of texts) {
+        const orderList = parseOrderList(text);
+        const infoMap = parseUpdateInfo(text);
+        const score = countLeafletNames(infoMap) * 1000 + Object.keys(infoMap).length + orderList.length;
+        if (score > best.score) {
+            best = { orderList, infoMap, score };
+        }
+    }
+    return best;
+}
+
+async function getOrderTexts() {
+    if (googleOrderCsvText) {
+        return [googleOrderCsvText];
+    }
+    return [];
+}
+
+async function loadGoogleSheets(silent = false) {
+    if (!silent) {
+        clearLog();
+        disableButtons(true);
+        showProgress(true);
+        updateProgress(0, 1, "Google таблица...", "Получаем список листов");
+    }
+    parent.postMessage({ pluginMessage: { type: 'google-sheets' } }, '*');
+}
+
+async function loadGoogleCsv() {
+    const select = document.getElementById('googleSheetSelect');
+    const gid = select?.value || "";
+    const sheetName = select?.selectedOptions?.[0]?.textContent || "";
+    if (!gid) {
+        showError("Выберите лист Google");
+        return;
+    }
+    clearLog();
+    disableButtons(true);
+    showProgress(true);
+    updateProgress(0, 1, "Google таблица...", sheetName);
+    parent.postMessage({ pluginMessage: { type: 'google-csv', gid, sheetName } }, '*');
+}
+
+function resolveLeafletName(mainSku, item, infoMap) {
+    if (mainSku && infoMap?.[mainSku]?.leafletName) {
+        return infoMap[mainSku].leafletName;
+    }
+    const variants = Array.isArray(item?.variants) ? item.variants : [];
+    for (const variant of variants) {
+        const sku = variant?.sku;
+        if (sku && infoMap?.[sku]?.leafletName) {
+            return infoMap[sku].leafletName;
+        }
+    }
+    return "";
+}
+
+function resolveSurpriseText(mainSku, item, infoMap) {
+    if (mainSku && infoMap?.[mainSku]?.surpriseText) {
+        return infoMap[mainSku].surpriseText;
+    }
+    const variants = Array.isArray(item?.variants) ? item.variants : [];
+    for (const variant of variants) {
+        const sku = variant?.sku;
+        if (sku && infoMap?.[sku]?.surpriseText) {
+            return infoMap[sku].surpriseText;
+        }
+    }
+    return "";
+}
+
+function updateOrderSummary(infoMap, jsonCount = null) {
+    const summary = document.getElementById('orderSummary');
+    if (!summary) return;
+
+    const entries = Object.entries(infoMap || {});
+    if (entries.length === 0) {
+        summary.classList.remove('show');
+        summary.innerHTML = "";
+        return;
+    }
+
+    const leafletCounts = new Map();
+    let withoutLeaflet = 0;
+    let surpriseCount = 0;
+    for (const [, entry] of entries) {
+        if (String(entry?.surpriseText || "").trim()) surpriseCount++;
+        const name = String(entry?.leafletName || "").trim();
+        if (!name) {
+            withoutLeaflet++;
+            continue;
+        }
+        addLeafletCount(leafletCounts, name);
+    }
+
+    const leafletList = [...leafletCounts.values()]
+        .sort((a, b) => a.title.localeCompare(b.title, "ru"))
+        .map(item => `${escapeHtml(item.title)}: ${item.count}`)
+        .join("<br>");
+    const jsonPart = Number.isFinite(jsonCount) ? `<div>JSON товаров: <strong>${jsonCount}</strong></div>` : "";
+
+    summary.innerHTML = `
+        ${jsonPart}
+        <div>CSV строк с кодами: <strong>${entries.length}</strong></div>
+        <div>Листовок: <strong>${leafletCounts.size}</strong></div>
+        <div>Подарочных условий: <strong>${surpriseCount}</strong></div>
+        <div>Без названия листовки: <strong>${withoutLeaflet}</strong></div>
+        ${leafletList ? `<div style="margin-top: 6px;">${leafletList}</div>` : ""}
+    `;
+    summary.classList.add('show');
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function updateJsonSummary(jsonCount) {
+    const summary = document.getElementById('jsonSummary');
+    if (!summary) return;
+    if (!Number.isFinite(jsonCount)) {
+        summary.classList.remove('show');
+        summary.innerHTML = "";
+        return;
+    }
+    summary.innerHTML = `Встроенная база товаров: <strong>${jsonCount}</strong>`;
+    summary.classList.add('show');
+}
+
+function refreshJsonSummary() {
+    currentJsonCount = getEmbeddedProducts().length;
+    updateJsonSummary(currentJsonCount);
+    updateOrderSummary(currentOrderInfoMap, currentJsonCount);
+}
+
+async function fetchImageForProduct(sku, signal) {
     if (!sku) return null;
     try {
+        if (signal?.aborted) return null;
         if (imageCache.has(sku)) return imageCache.get(sku);
         await ensureProxyWarm();
+        if (signal?.aborted) return null;
         const apiUrl = API_BASE + sku;
         const proxyApiUrl = PROXY_BASE + encodeURIComponent(apiUrl);
-        const apiResponse = await fetch(proxyApiUrl);
+        const apiResponse = await fetch(proxyApiUrl, { signal });
         if (!apiResponse.ok) return null;
         const apiData = await apiResponse.json();
         if (!apiData || !apiData.data || !apiData.data.image) return null;
+        if (signal?.aborted) return null;
         const realImageUrl = apiData.data.image;
         const proxyImageUrl = PROXY_BASE + encodeURIComponent(realImageUrl);
-        const imgResponse = await fetch(proxyImageUrl);
+        const imgResponse = await fetch(proxyImageUrl, { signal });
         if (!imgResponse.ok) return null;
         const imgBlob = await imgResponse.blob();
         const imgBuffer = await imgBlob.arrayBuffer();
@@ -863,18 +1447,20 @@ async function fetchImageForProduct(sku) {
         imageCache.set(sku, bytes);
         return bytes;
     } catch (err) {
-        console.warn(`Ошибка фото ${sku}:`, err.message);
+        if (err?.name === "AbortError") return null;
+        logMessage(`Ошибка фото ${sku}: ${err.message}`);
         return null;
     }
 }
 
-async function mapWithConcurrency(items, limit, worker, onProgress) {
+async function mapWithConcurrency(items, limit, worker, onProgress, shouldCancel) {
     const results = new Array(items.length);
     let nextIndex = 0;
     let completed = 0;
 
     async function run() {
         while (nextIndex < items.length) {
+            if (shouldCancel && shouldCancel()) break;
             const current = nextIndex++;
             results[current] = await worker(items[current], current);
             completed++;
@@ -892,77 +1478,96 @@ async function mapWithConcurrency(items, limit, worker, onProgress) {
 }
 
 // --- ЗАПУСК ГЕНЕРАЦИИ (КНОПКА 1) ---
-async function startGeneration(limitCount = null) {
-    const jsonFile = document.getElementById('jsonInput').files[0];
-    const orderFile = document.getElementById('orderInput')?.files?.[0] || null;
-    const giftBlockEnabled = document.getElementById('giftBlockToggle').checked;
-    const giftBlockMode = (document.querySelector('input[name="giftBlockMode"]:checked') || {}).value || "twoThirds";
-    const compactLayout = document.getElementById('compactLayoutToggle').checked;
+async function startGeneration(limitCount = null, options = {}) {
+    resetCancellation();
+    clearLog();
+    const giftBlockEnabled = true;
+    const giftBlockMode = "startSecond";
+    const skipImages = !!document.getElementById('skipImagesToggle')?.checked;
     
-    // Проверка наличия главного файла
-    if (!jsonFile) return alert("Выберите JSON файл!");
+    const jsonData = getEmbeddedProducts();
+    if (jsonData.length === 0) {
+        showError("Встроенная база товаров пуста");
+        return;
+    }
     
     // Блокируем интерфейс
     disableButtons(true);
     showProgress(true);
+    updateOrderSummary({});
     updateProgress(0, 100, "Чтение файлов...", "Инициализация");
 
     try {
-        // 1. Читаем ТОВАРЫ (JSON) -> UTF-8
-        updateProgress(10, 100, "Чтение JSON...", "Парсинг каталога");
-        const jsonText = await readFileAsText(jsonFile, 'utf-8');
-        const jsonData = JSON.parse(jsonText);
+        updateProgress(10, 100, "Подготовка базы...", "Встроенный каталог");
+        currentJsonCount = jsonData.length;
+        updateJsonSummary(currentJsonCount);
 
         let orderList = [];
         let infoMap = {};
-        if (orderFile) {
-            updateProgress(12, 100, "Чтение CSV...", orderFile.name);
-            let orderText = await readFileAsText(orderFile, 'utf-8');
-            orderList = parseOrderList(orderText);
-            infoMap = parseUpdateInfo(orderText);
-            if (orderList.length === 0 && Object.keys(infoMap).length === 0) {
-                orderText = await readFileAsText(orderFile, 'windows-1251');
-                orderList = parseOrderList(orderText);
-                infoMap = parseUpdateInfo(orderText);
-            }
-            if (orderList.length === 0 && Object.keys(infoMap).length === 0) {
-                orderText = await readFileAsText(orderFile, 'utf-16le');
-                orderList = parseOrderList(orderText);
-                infoMap = parseUpdateInfo(orderText);
-            }
+        const orderTexts = await getOrderTexts();
+        if (orderTexts.length === 0) {
+            throw new Error("Загрузите лист Google");
         }
+        updateProgress(12, 100, "Чтение CSV...", googleOrderSheetName || "Google лист");
+        throwIfCancelled();
+        const parsedOrder = parseOrderFileBest(orderTexts);
+        orderList = parsedOrder.orderList;
+        infoMap = parsedOrder.infoMap;
         
-        const total = jsonData.length;
-        const maxCount = limitCount && Number.isFinite(limitCount) ? Math.min(total, limitCount) : total;
-        const sourceGroups = jsonData.slice(0, maxCount);
+        let orderedProducts = selectProductsByOrder(jsonData, orderList);
+        if (orderedProducts.length === 0) {
+            throw new Error("В Google листе не найдено товаров из встроенной базы");
+        }
+        const total = orderedProducts.length;
+        let sourceGroups;
+        if (options.leafletSample) {
+            sourceGroups = pickLeafletTestGroups(orderedProducts, infoMap, 2);
+            logMessage("Тест по листовкам: взято до 2 товаров на каждую листовку");
+        } else {
+            const maxCount = limitCount && Number.isFinite(limitCount) ? Math.min(total, limitCount) : total;
+            sourceGroups = orderedProducts.slice(0, maxCount);
+        }
+        updateOrderSummary(infoMap, sourceGroups.length);
+        logPreflight(jsonData, infoMap, sourceGroups);
 
-        updateProgress(15, 100, "Поднимаем прокси...", "Подготовка к загрузке фото");
-        await ensureProxyWarm();
-
-        updateProgress(20, 100, "Скачивание фото...", "Пакетная загрузка");
         const mainSkus = sourceGroups.map(item => (
             item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null
         ));
-        const imageResults = await mapWithConcurrency(
-            mainSkus,
-            IMAGE_FETCH_CONCURRENCY,
-            async (sku) => fetchImageForProduct(sku),
-            (completed, count, sku) => {
-                if (completed === count || completed % 5 === 0) {
-                    updateProgress(
-                        20 + Math.round((completed / Math.max(1, count)) * 45),
-                        100,
-                        "Скачивание фото...",
-                        sku ? `Артикул ${sku}` : "Без артикула"
-                    );
-                }
-            }
-        );
+        let imageResults = new Array(sourceGroups.length).fill(null);
+        if (skipImages) {
+            logMessage("Быстрый режим: картинки не скачиваются");
+        } else {
+            updateProgress(15, 100, "Поднимаем прокси...", "Подготовка к загрузке фото");
+            await ensureProxyWarm();
+            throwIfCancelled();
+
+            updateProgress(20, 100, "Скачивание фото...", "Пакетная загрузка");
+            imageResults = await mapWithConcurrency(
+                mainSkus,
+                IMAGE_FETCH_CONCURRENCY,
+                async (sku) => fetchImageForProduct(sku, activeAbortController?.signal),
+                (completed, count, sku) => {
+                    if (generationCancelled) return;
+                    if (completed === count || completed % 5 === 0) {
+                        updateProgress(
+                            20 + Math.round((completed / Math.max(1, count)) * 45),
+                            100,
+                            "Скачивание фото...",
+                            sku ? `Артикул ${sku}` : "Без артикула"
+                        );
+                    }
+                },
+                () => generationCancelled
+            );
+        }
+        throwIfCancelled();
+        logDataProblemReport(jsonData, infoMap, sourceGroups, skipImages ? null : imageResults);
 
         const processedGroups = [];
 
         // 3. СБОРКА ДАННЫХ ДЛЯ FIGMA
         for (let i = 0; i < sourceGroups.length; i++) {
+            throwIfCancelled();
             const item = sourceGroups[i];
             const mainSku = mainSkus[i];
             const imageBytes = imageResults[i];
@@ -976,13 +1581,17 @@ async function startGeneration(limitCount = null) {
             }
             const mainDiscount = mainSku && infoMap[mainSku] ? infoMap[mainSku].discount : null;
             const mainConditions = mainSku && infoMap[mainSku] ? infoMap[mainSku].conditions : null;
+            const mainSurprise = resolveSurpriseText(mainSku, item, infoMap);
+            const mainLeafletName = resolveLeafletName(mainSku, item, infoMap);
             processedGroups.push({
                 headerName: item.title,          
                 descriptionText: item.description, 
                 imageBytes: imageBytes,
                 discountText: mainDiscount || null,
-                discountInfoText: mainConditions || null,
+                discountInfoText: mainSurprise ? null : (mainConditions || null),
+                surpriseText: mainSurprise || null,
                 mainSku: mainSku,
+                leafletName: mainLeafletName || null,
                 
                 // Передаем ID бренда для переключения логотипа
                 brandId: item.brand, 
@@ -1000,27 +1609,31 @@ async function startGeneration(limitCount = null) {
 
         // 4. ЗАВЕРШЕНИЕ
         updateProgress(98, 100, "Передача данных...", "Отправляем в Figma");
+        throwIfCancelled();
         
         // Небольшая задержка, чтобы глаз успел заметить 100%
         const settings = getSettingsFromUI();
     const layout = {
         giftBlockEnabled,
         giftBlockMode,
-        compactLayout,
         settings,
         orderList,
         infoMap
     };
 
         setTimeout(() => {
+             if (generationCancelled) {
+                 disableButtons(false);
+                 showProgress(false);
+                 return;
+             }
              parent.postMessage({ 
                  pluginMessage: { type: 'build', data: { groups: processedGroups, layout } } 
              }, '*');
         }, 200);
 
     } catch (err) {
-        console.error(err);
-        alert("Ошибка при генерации: " + err.message);
+        if (!generationCancelled) showError("Ошибка при генерации: " + err.message);
         disableButtons(false);
         showProgress(false);
     }
@@ -1029,20 +1642,22 @@ async function startGeneration(limitCount = null) {
 
 // --- ЗАПУСК ОБНОВЛЕНИЯ ---
 async function startUpdate() {
-    const csvFile = document.getElementById('csvUpdateInput').files[0];
-    if (!csvFile) return alert("Выберите CSV файл с информацией!");
+    resetCancellation();
+    const texts = await getOrderTexts();
+    if (texts.length === 0) {
+        showError("Загрузите лист Google");
+        return;
+    }
     
     disableButtons(true);
     showProgress(true);
-    updateProgress(0, 100, "Чтение CSV...", "Подготовка");
+    updateProgress(0, 100, "Подготовка...", googleOrderSheetName || "Google лист");
 
     try {
-        let csvText = await readFileAsText(csvFile, 'utf-8');
-        let infoMap = parseUpdateInfo(csvText);
-        if (Object.keys(infoMap).length === 0) {
-            csvText = await readFileAsText(csvFile, 'windows-1251');
-            infoMap = parseUpdateInfo(csvText);
-        }
+        const parsedOrder = parseOrderFileBest(texts);
+        const infoMap = parsedOrder.infoMap;
+        currentOrderInfoMap = infoMap;
+        updateOrderSummary(currentOrderInfoMap, currentJsonCount);
         
         updateProgress(50, 100, "Обновление...", "Ищем карточки на холсте");
         
@@ -1051,7 +1666,7 @@ async function startUpdate() {
         }, '*');
 
     } catch (err) {
-        alert("Ошибка чтения CSV: " + err.message);
+        showError("Ошибка обновления: " + err.message);
         disableButtons(false);
         showProgress(false);
     }
@@ -1061,35 +1676,112 @@ async function startTestGeneration() {
     return startGeneration(10);
 }
 
+async function startLeafletTestGeneration() {
+    return startGeneration(null, { leafletSample: true });
+}
+
+async function startDataValidation() {
+    resetCancellation();
+    clearLog();
+    const jsonData = getEmbeddedProducts();
+    if (jsonData.length === 0) {
+        showError("Встроенная база товаров пуста");
+        return;
+    }
+
+    disableButtons(true);
+    showProgress(true);
+    updateProgress(0, 100, "Проверка данных...", "Чтение файлов");
+
+    try {
+        throwIfCancelled();
+        currentJsonCount = jsonData.length;
+        updateJsonSummary(currentJsonCount);
+
+        let infoMap = {};
+        const texts = await getOrderTexts();
+        if (texts.length === 0) {
+            throw new Error("Загрузите лист Google");
+        }
+        const parsedOrder = parseOrderFileBest(texts);
+        infoMap = parsedOrder.infoMap;
+        currentOrderInfoMap = infoMap;
+
+        const sourceGroups = selectProductsByOrder(jsonData, parsedOrder.orderList);
+        if (sourceGroups.length === 0) {
+            throw new Error("В Google листе не найдено товаров из встроенной базы");
+        }
+        updateOrderSummary(infoMap, sourceGroups.length);
+        logPreflight(jsonData, infoMap, sourceGroups);
+        logDataProblemReport(jsonData, infoMap, sourceGroups, null);
+        updateProgress(100, 100, "Проверка завершена", "Отчет в логе");
+        setTimeout(() => {
+            disableButtons(false);
+            showProgress(false);
+        }, 400);
+    } catch (err) {
+        showError("Ошибка проверки данных: " + err.message);
+        disableButtons(false);
+        showProgress(false);
+    }
+}
+
+function checkComponents() {
+    clearLog();
+    disableButtons(true);
+    showProgress(true);
+    updateProgress(0, 1, "Проверка шаблона...", "Компоненты");
+    parent.postMessage({ pluginMessage: { type: 'check-components' } }, '*');
+}
+
 
 // bind buttons after DOM is ready
 window.addEventListener('DOMContentLoaded', () => {
     const settings = loadSettings();
     applySettingsToUI(settings);
-    setupDropzone('jsonInput', 'jsonDrop', 'jsonFileName');
-    setupDropzone('csvUpdateInput', 'csvDrop', 'csvFileName');
-    setupDropzone('orderInput', 'orderDrop', 'orderFileName');
-    document.getElementById('settingsBtn').addEventListener('click', openSettings);
-    document.getElementById('settingsCloseBtn').addEventListener('click', closeSettings);
+    const debugControls = document.getElementById('debugControls');
+    if (debugControls && !DEBUG_UI) debugControls.classList.add('hidden');
+    refreshJsonSummary();
+    onClick('settingsBtn', openSettings);
+    onClick('settingsCloseBtn', closeSettings);
     document.getElementById('settingsModal').addEventListener('click', (e) => {
         if (e.target && e.target.id === 'settingsModal') closeSettings();
     });
-    document.getElementById('runBtn').addEventListener('click', startGeneration);
-    document.getElementById('updateBtn').addEventListener('click', startUpdate);
-    document.getElementById('testBtn').addEventListener('click', startTestGeneration);
-    document.getElementById('stopBtn').addEventListener('click', () => {
+    onClick('runBtn', startGeneration);
+    onClick('updateBtn', startUpdate);
+    const googleSelect = document.getElementById('googleSheetSelect');
+    if (googleSelect) {
+        googleSelect.addEventListener('change', () => {
+            if (googleSelect.value) {
+                loadGoogleCsv();
+            } else {
+                googleOrderCsvText = "";
+                googleOrderSheetName = "";
+                currentOrderInfoMap = {};
+                updateOrderSummary(currentOrderInfoMap, currentJsonCount);
+                const label = document.getElementById('orderFileName');
+                if (label) label.textContent = "Лист не загружен";
+            }
+        });
+    }
+    onClick('testBtn', startTestGeneration);
+    onClick('testLeafletsBtn', startLeafletTestGeneration);
+    onClick('validateDataBtn', startDataValidation);
+    onClick('checkComponentsBtn', checkComponents);
+    onClick('stopBtn', () => {
         updateProgress(0, 1, "Остановка...", "Ждем завершения");
-        parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+        requestCancellation();
     });
-    document.getElementById('cfgSaveBtn').addEventListener('click', () => {
+    onClick('cfgSaveBtn', () => {
         const s = getSettingsFromUI();
         saveSettings(s);
         closeSettings();
     });
-    document.getElementById('cfgResetBtn').addEventListener('click', () => {
+    onClick('cfgResetBtn', () => {
         applySettingsToUI(DEFAULT_SETTINGS);
         saveSettings(DEFAULT_SETTINGS);
         closeSettings();
     });
+    loadGoogleSheets(true);
 });
 </script>

@@ -103,6 +103,23 @@ export async function fillCardStatic(card: FrameNode, group: Group) {
         }
     }
 
+    const surprise = findTextInNode(card, CONFIG.SURPRISE);
+    const surpriseWrapper = findNodeInCard(card, CONFIG.SURPRISE_WRAPPER);
+    if (surprise) {
+        await loadFontForNode(surprise);
+        if (group.surpriseText) {
+            surprise.characters = String(group.surpriseText);
+            surprise.visible = true;
+            if (surpriseWrapper) surpriseWrapper.visible = true;
+        } else {
+            surprise.visible = false;
+            surprise.characters = "";
+            if (surpriseWrapper) surpriseWrapper.visible = false;
+        }
+    } else if (surpriseWrapper && !group.surpriseText) {
+        surpriseWrapper.visible = false;
+    }
+
     const imgNode = card.findOne(n => n.name === CONFIG.IMAGE) as SceneNode | null;
     if (imgNode && group.imageBytes) {
         const image = figma.createImage(new Uint8Array(group.imageBytes));
@@ -132,7 +149,7 @@ export async function fillCardStatic(card: FrameNode, group: Group) {
                 props[propName] = targetVariantName;
                 logoNode.setProperties(props);
             } catch (err) {
-                console.log(`Не удалось переключить бренд для ${group.brandId}. Error: ${err}`);
+                postLog(`Не удалось переключить бренд для ${group.brandId}. Error: ${err}`);
             }
         }
         try {
@@ -159,7 +176,7 @@ export async function fillCardStatic(card: FrameNode, group: Group) {
                 (logoNode as any).clipsContent = true;
             }
         } catch (err) {
-            console.log("Не удалось изменить размер логотипа:", err);
+            postLog(`Не удалось изменить размер логотипа: ${err}`);
         }
     }
 }
@@ -191,21 +208,22 @@ function getOrCreateListFrame(card: FrameNode): FrameNode | null {
         listNode = detached;
     }
 
-    if (listNode && "children" in listNode) {
-        return listNode as FrameNode;
-    }
-    if (listNode && listNode.type === "TEXT" && listNode.parent && "children" in listNode.parent) {
-        const parent = listNode.parent;
-        const idx = parent.children.indexOf(listNode);
+    const textListNode = listNode as unknown as TextNode | null;
+    if (textListNode && textListNode.type === "TEXT" && textListNode.parent && "children" in textListNode.parent) {
+        const parent = textListNode.parent;
+        const idx = parent.children.indexOf(textListNode);
         const frame = figma.createFrame();
         frame.name = CONFIG.LIST_CONTAINER;
-        frame.x = listNode.x;
-        frame.y = listNode.y;
+        frame.x = textListNode.x;
+        frame.y = textListNode.y;
         frame.resize(card.width, 1);
         frame.fills = [];
         parent.insertChild(Math.max(0, idx), frame);
-        listNode.remove();
+        textListNode.remove();
         return frame;
+    }
+    if (listNode && "children" in listNode) {
+        return listNode as FrameNode;
     }
 
     return null;
@@ -274,7 +292,7 @@ export async function fillCardData(card: FrameNode, group: Group, rowMaster: Com
     await fillCardStatic(card, group);
     const list = getOrCreateListFrame(card);
     if (!list) {
-        console.warn("ListContainer not found in ProductCard");
+        postLog("ListContainer not found in ProductCard");
         return;
     }
     await appendRowsToCardList(list, card, rowMaster, group.items, group.discountText || null, 0);
@@ -392,4 +410,8 @@ function getRowCapacityForHeight(height: number, metrics: SplitMetrics): number 
     const extraHeight = height - metrics.minCardHeight;
     const extraRows = Math.floor(extraHeight / Math.max(1, metrics.rowGrowth));
     return Math.max(1, metrics.baseRows + extraRows);
+}
+
+function postLog(text: string) {
+    figma.ui.postMessage({ type: "log", text });
 }

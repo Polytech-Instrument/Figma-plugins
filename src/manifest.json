@@ -6,6 +6,6 @@
   "ui": "ui.html",
   "permissions": ["teamlibrary"],
   "editorType": ["figma"],
-  "networkAccess": { "allowedDomains": ["https://figma-proxy-1.onrender.com/"] },
+  "networkAccess": { "allowedDomains": ["https://figma-proxy-1.onrender.com/", "https://script.google.com/"] },
   "documentAccess": "dynamic-page"
 }
