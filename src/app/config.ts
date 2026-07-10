@@ -7,13 +7,20 @@ export {
     LIBRARY_NAME,
     LIB_COMPONENT_BANNER,
     LIB_COMPONENT_CARD,
+    LIB_COMPONENT_BOX_CARD,
     LIB_COMPONENT_ROW,
+    LIB_COMPONENT_BOX_ROW,
     KEY_BANNER,
     KEY_PRODUCT_CARD,
+    KEY_PRODUCT_BOX_CARD,
     KEY_ROW_ITEM,
+    KEY_ROW_ITEM_BOX,
     KEY_MAIN_LOGOTYPES_SET,
     KEY_FOOTER,
-    KEY_PAGINATOR
+    KEY_PAGINATOR,
+    KEY_BOX_NOTICE_TOP,
+    KEY_BOX_NOTICE_BOTTOM,
+    KEY_GIFT_BLOCK_COMMON
 } from './componentKeys';
 
 export const CONFIG = {
@@ -50,6 +57,13 @@ export type LayoutSettings = {
     FIRST_PAGE_SHIFT_DEFAULT?: number;
     FIRST_PAGE_SHIFT_TWO_THIRDS?: number;
     FOOTER_H?: number;
+    BOX_HEADER_NOTICE_H?: number;
+    BOX_HEADER_NOTICE_W?: number;
+    BOX_HEADER_NOTICE_GAP_TOP?: number;
+    BOX_HEADER_NOTICE_GAP_BOTTOM?: number;
+    BOX_FOOTER_NOTICE_H?: number;
+    BOX_FOOTER_NOTICE_W?: number;
+    AD_PLACEHOLDER_MIN_H?: number;
     PAGINATOR_X?: number;
     PAGINATOR_Y?: number;
     PAGINATOR_ENABLED?: boolean;
@@ -89,6 +103,13 @@ export function applyConfigOverrides(overrides?: LayoutSettings) {
     if (Number.isFinite(overrides.FIRST_PAGE_SHIFT_DEFAULT)) CONFIG.FIRST_PAGE_SHIFT_DEFAULT = overrides.FIRST_PAGE_SHIFT_DEFAULT as number;
     if (Number.isFinite(overrides.FIRST_PAGE_SHIFT_TWO_THIRDS)) CONFIG.FIRST_PAGE_SHIFT_TWO_THIRDS = overrides.FIRST_PAGE_SHIFT_TWO_THIRDS as number;
     if (Number.isFinite(overrides.FOOTER_H)) CONFIG.FOOTER_H = overrides.FOOTER_H as number;
+    if (Number.isFinite(overrides.BOX_HEADER_NOTICE_H)) CONFIG.BOX_HEADER_NOTICE_H = overrides.BOX_HEADER_NOTICE_H as number;
+    if (Number.isFinite(overrides.BOX_HEADER_NOTICE_W)) CONFIG.BOX_HEADER_NOTICE_W = overrides.BOX_HEADER_NOTICE_W as number;
+    if (Number.isFinite(overrides.BOX_HEADER_NOTICE_GAP_TOP)) CONFIG.BOX_HEADER_NOTICE_GAP_TOP = overrides.BOX_HEADER_NOTICE_GAP_TOP as number;
+    if (Number.isFinite(overrides.BOX_HEADER_NOTICE_GAP_BOTTOM)) CONFIG.BOX_HEADER_NOTICE_GAP_BOTTOM = overrides.BOX_HEADER_NOTICE_GAP_BOTTOM as number;
+    if (Number.isFinite(overrides.BOX_FOOTER_NOTICE_H)) CONFIG.BOX_FOOTER_NOTICE_H = overrides.BOX_FOOTER_NOTICE_H as number;
+    if (Number.isFinite(overrides.BOX_FOOTER_NOTICE_W)) CONFIG.BOX_FOOTER_NOTICE_W = overrides.BOX_FOOTER_NOTICE_W as number;
+    if (Number.isFinite(overrides.AD_PLACEHOLDER_MIN_H)) CONFIG.AD_PLACEHOLDER_MIN_H = overrides.AD_PLACEHOLDER_MIN_H as number;
     if (Number.isFinite(overrides.PAGINATOR_X)) CONFIG.PAGINATOR_X = overrides.PAGINATOR_X as number;
     if (Number.isFinite(overrides.PAGINATOR_Y)) CONFIG.PAGINATOR_Y = overrides.PAGINATOR_Y as number;
     if (typeof overrides.PAGINATOR_ENABLED === "boolean") CONFIG.PAGINATOR_ENABLED = overrides.PAGINATOR_ENABLED;

@@ -27,6 +27,7 @@ async function main() {
       fs.copyFileSync(srcPath, outPath);
     }
   }
+  embedUiSupportScripts();
   embedProductCatalog();
 
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-');
@@ -40,6 +41,31 @@ async function main() {
   };
   fs.writeFileSync(path.join(distDir, 'build-info.json'), JSON.stringify(buildInfo, null, 2));
   createZip(stamp);
+}
+
+function embedUiSupportScripts() {
+  const uiPath = path.join(distDir, 'ui.html');
+  const sharedEntry = path.join(srcDir, 'shared', 'index.ts');
+  const sharedOut = path.join(distDir, 'ui-support.js');
+  if (!fs.existsSync(uiPath) || !fs.existsSync(sharedEntry)) return;
+  esbuild.buildSync({
+    entryPoints: [sharedEntry],
+    bundle: true,
+    platform: 'browser',
+    format: 'iife',
+    target: ['es2017'],
+    outfile: sharedOut
+  });
+  const ui = fs.readFileSync(uiPath, 'utf8');
+  const support = fs.readFileSync(sharedOut, 'utf8');
+  fs.rmSync(sharedOut, { force: true });
+  const marker = '<script>';
+  const injected = `<script>\n${support}\n</script>\n\n<script>`;
+  const nextUi = ui.replace(marker, injected);
+  if (nextUi === ui) {
+    throw new Error('Failed to embed UI support scripts');
+  }
+  fs.writeFileSync(uiPath, nextUi);
 }
 
 function getProductCatalogCount() {

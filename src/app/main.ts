@@ -1,7 +1,19 @@
-import { applyConfigOverrides, KEY_BANNER, KEY_PRODUCT_CARD, KEY_ROW_ITEM, KEY_FOOTER, KEY_PAGINATOR } from './config';
+import {
+    applyConfigOverrides,
+    KEY_BANNER,
+    KEY_PRODUCT_CARD,
+    KEY_PRODUCT_BOX_CARD,
+    KEY_ROW_ITEM,
+    KEY_ROW_ITEM_BOX,
+    KEY_FOOTER,
+    KEY_PAGINATOR,
+    KEY_BOX_NOTICE_TOP,
+    KEY_BOX_NOTICE_BOTTOM,
+    KEY_GIFT_BLOCK_COMMON
+} from './config';
 import { createBrochure } from './generation';
 import { updateInfoOnPage } from './update';
-import { getComponentByKey, loadFontCached } from './utils';
+import { getComponentByKey, loadFontCached, normalizeNameKey } from './utils';
 
 figma.showUI(__html__, { width: 430, height: 650 });
 
@@ -54,7 +66,7 @@ figma.ui.onmessage = async (msg) => {
             const response = await fetchGoogle(`${GOOGLE_SCRIPT_URL}?action=csv&gid=${encodeURIComponent(gid)}`);
             if (!response.ok) throw new Error(`Google CSV HTTP ${response.status}`);
             const csv = await response.text();
-            figma.ui.postMessage({ type: 'google-csv-result', csv, gid, sheetName: msg.sheetName || "" });
+            figma.ui.postMessage({ type: 'google-csv-result', csv, gid, sheetName: msg.sheetName || "", requestId: msg.requestId || "" });
             return;
         }
         if (msg.type === 'build') {
@@ -95,16 +107,47 @@ async function checkComponents() {
     const entries = [
         ["Banner", KEY_BANNER],
         ["ProductCard", KEY_PRODUCT_CARD],
+        ["ProductCardInBox", KEY_PRODUCT_BOX_CARD],
         ["RowItem", KEY_ROW_ITEM],
+        ["RowItem4", KEY_ROW_ITEM_BOX],
         ["Footer", KEY_FOOTER],
-        ["Paginator", KEY_PAGINATOR]
-    ] as const;
+        ["Paginator", KEY_PAGINATOR],
+        ["BoxNoticeTop", KEY_BOX_NOTICE_TOP],
+        ["BoxNoticeBottom", KEY_BOX_NOTICE_BOTTOM],
+        ["GiftBlockCommon", KEY_GIFT_BLOCK_COMMON]
+    ].filter(([, key]) => !!key) as Array<[string, string]>;
     const results: Array<{ name: string; ok: boolean }> = [];
     for (const [name, key] of entries) {
         const component = await getComponentByKey(key);
         results.push({ name, ok: !!component });
+        if (component) {
+            for (const layerName of getExpectedLayersForComponent(name)) {
+                results.push({
+                    name: `${name}/${layerName}`,
+                    ok: hasLayer(component, layerName)
+                });
+            }
+        }
     }
     return results;
+}
+
+function getExpectedLayersForComponent(name: string): string[] {
+    const map: Record<string, string[]> = {
+        Banner: ["#Title", "#Description"],
+        ProductCard: ["#Image", "#Title", "#Description", "productDiscount", "#ListContainer"],
+        ProductCardInBox: ["#Image", "#Title", "#Description", "productDiscount", "#ListContainer", "#PriceBox", "#QtyBox"],
+        RowItem: ["#SKU", "#Specs", "#Min", "#Qty", "#Price", "priceProductDiscount"],
+        RowItem4: ["#SKU", "#Specs", "#Min", "#Qty", "#PriceBox", "#QtyBox"],
+        BoxNoticeTop: [],
+        BoxNoticeBottom: []
+    };
+    return map[name] || [];
+}
+
+function hasLayer(root: ComponentNode, layerName: string): boolean {
+    const target = normalizeNameKey(layerName);
+    return !!root.findOne(node => normalizeNameKey(node.name || "") === target);
 }
 
 async function loadFonts() {

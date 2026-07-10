@@ -1,0 +1,1 @@
+interface CanvasRenderingContext2D {}

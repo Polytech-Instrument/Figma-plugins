@@ -337,6 +337,16 @@
     line-height: 1.45;
   }
   .log-panel.show { display: block; }
+  .sheet-picker-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .sheet-picker-row { display: grid; grid-template-columns: 1fr 34px; gap: 8px; align-items: center; }
+  .sheet-picker-row select { margin-top: 0 !important; }
+  .sheet-add-btn, .sheet-remove-btn {
+    height: 34px;
+    padding: 0;
+    border-radius: 8px;
+    font-size: 17px;
+    line-height: 1;
+  }
   .hidden { display: none !important; }
 </style>
 
@@ -345,18 +355,21 @@
 
 <div class="app">
     <div class="topbar">
-        <div style="font-size: 13px; font-weight: 600;">Ptech Auto</div>
-        <button id="settingsBtn" class="gear-btn" title="Настройки">⚙</button>
+        <div style="font-size: 13px; font-weight: 600;">Политех Верстальщик</div>
     </div>
 
 <div class="section">
-    <h3>1. Генерация Каталога</h3>
-    <div class="csv-summary show" id="jsonSummary"></div>
+    <div class="csv-summary" id="jsonSummary"></div>
     <div class="file-block">
         <span class="label">Google таблица</span>
-        <select id="googleSheetSelect" style="margin-top: 8px;">
-            <option value="">Загрузка листов...</option>
-        </select>
+        <div id="googleSheetRows" class="sheet-picker-list">
+            <div class="sheet-picker-row" data-sheet-row="primary">
+                <select id="googleSheetSelect" data-sheet-select data-sheet-id="primary">
+                    <option value="">Загрузка листов...</option>
+                </select>
+                <button id="addGoogleSheetBtn" class="secondary sheet-add-btn" title="Добавить лист">+</button>
+            </div>
+        </div>
         <div class="drop-filename" id="orderFileName">Лист не загружен</div>
         <div class="csv-summary" id="orderSummary"></div>
     </div>
@@ -456,9 +469,13 @@
 
 <script>
 const PROXY_BASE = "https://figma-proxy-1.onrender.com/img?url=";
+const PROXY_API_BASE = "https://figma-proxy-1.onrender.com/proxy?url=";
 const API_BASE = "https://ptech.ru/getproductimage.php?article="; 
 const PROXY_HOST = "https://figma-proxy-1.onrender.com";
 const IMAGE_FETCH_CONCURRENCY = 4;
+const IMAGE_FETCH_RETRIES = 1;
+const TRIM_IMAGE_WHITESPACE = true;
+const PRODUCT_IMAGE_MAX_SIZE = 90;
 const DEBUG_UI = false;
 const EMBEDDED_PRODUCTS = [];
 let proxyWarmPromise = null;
@@ -468,7 +485,13 @@ let currentJsonCount = null;
 let currentOrderInfoMap = {};
 let googleOrderCsvText = "";
 let googleOrderSheetName = "";
+let googleSheetsList = [];
+const googleLoadedSheets = new Map();
+let lastGenerationStats = null;
+let smallImageObjectCount = 0;
+const smallImageObjectSkus = new Set();
 const imageCache = new Map();
+let imageCacheBust = Date.now();
 const SETTINGS_SCHEMA_VERSION = 2;
 const SETTINGS_KEY = "ptech_settings_v2";
 const LEGACY_SETTINGS_KEYS = ["ptech_settings_v1"];
@@ -482,7 +505,7 @@ const DEFAULT_SETTINGS = {
     A4_W: 593,
     A4_H: 842,
     PAD_X: 20,
-    PAD_Y: 30,
+    PAD_Y: 38,
     COL_GAP: 20,
     ITEM_GAP: 0,
     COL_W: 268,
@@ -529,6 +552,47 @@ function setDisabled(id, disabled) {
 function onClick(id, handler) {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', handler);
+}
+
+function buildFinalGenerationSummary(report, stats) {
+    if (!report && !stats) return "";
+    const pages = Number(report?.pages) || 0;
+    const cards = Number(stats?.cards) || 0;
+    const rows = Number(stats?.rows) || 0;
+    const loadedImages = Number(stats?.loadedImages) || 0;
+    const totalImages = Number(stats?.totalImages) || 0;
+    const adPlaceholders = Array.isArray(report?.runs)
+        ? report.runs.reduce((sum, run) => sum + (Number(run?.adPlaceholders) || 0), 0)
+        : 0;
+    const cardErrors = Array.isArray(report?.runs)
+        ? report.runs.reduce((sum, run) => sum + (Number(run?.cardErrors) || 0), 0)
+        : 0;
+    const parts = [`Готово: ${pages} стр.`, `${cards} карточек`, `${rows} строк`];
+    if (!stats?.skipImages && totalImages > 0) {
+        parts.push(`фото ${loadedImages}/${totalImages}`);
+    }
+    if (!stats?.isBox && Number(report?.leaflets) > 0) {
+        parts.push(`листовок ${report.leaflets}`);
+    }
+    if (adPlaceholders > 0) {
+        parts.push(`рекламных мест ${adPlaceholders}`);
+    }
+    if (Number(report?.figmaMs) > 0) {
+        parts.push(`Figma ${(Number(report.figmaMs) / 1000).toFixed(1)}с`);
+    }
+    if (Number(report?.totalMs) > 0) {
+        parts.push(`всего ${(Number(report.totalMs) / 1000).toFixed(1)}с`);
+    }
+    if (Number(stats?.smallImageObjectCount) > 0) {
+        parts.push(`мелких фото ${stats.smallImageObjectCount}`);
+    }
+    if (Number(report?.overflowCount) > 0) {
+        parts.push(`переполнений ${report.overflowCount}`);
+    }
+    if (cardErrors > 0) {
+        parts.push(`ошибок карточек ${cardErrors}`);
+    }
+    return parts.join(", ");
 }
 
 function resetCancellation() {
@@ -604,43 +668,53 @@ function setupDropzone(inputId, dropId, labelId, onFilesChanged = null) {
     setLabel();
 }
 
+function requireShared(name) {
+    if (!window[name]) throw new Error(`Shared module ${name} is not loaded`);
+    return window[name];
+}
+
 function parseOrderList(text) {
-    const rows = parseCsvAuto(text);
-    if (rows.length === 0) return [];
+    return requireShared("PtechCsv").parseOrderList(text);
+}
 
-    let headerIndex = -1;
-    let codeCol = 0;
-    for (let i = 0; i < rows.length; i++) {
-        const cols = rows[i].map(c => normalizeHeader(c));
-        const idx = cols.findIndex(c => c === 'код');
-        if (idx !== -1) {
-            headerIndex = i;
-            codeCol = idx;
-            break;
-        }
-    }
+function parseCsvAuto(text) {
+    return requireShared("PtechCsv").parseCsvAuto(text);
+}
 
-    let start = headerIndex >= 0 ? headerIndex + 1 : 0;
-    if (headerIndex === -1) {
-        for (let i = 0; i < rows.length; i++) {
-            const first = (rows[i]?.[0] || "").trim();
-            if (/^[0-9]{4,}$/.test(first)) {
-                start = i;
-                break;
-            }
-        }
-    }
-    const order = [];
-    for (let i = start; i < rows.length; i++) {
-        const cols = rows[i];
-        if (!cols || cols.length === 0) continue;
-        const raw = (cols[codeCol] || "").trim();
-        if (!raw) continue;
-        if (/^[0-9]{4,}$/.test(raw)) {
-            order.push(raw);
-        }
-    }
-    return order;
+function parseUpdateInfo(csvText) {
+    return requireShared("PtechCsv").parseUpdateInfo(csvText);
+}
+
+function detectCsvColumns(csvText) {
+    return requireShared("PtechCsv").detectCsvColumns(csvText);
+}
+
+function collectJsonSkus(groups) {
+    return requireShared("PtechProducts").collectJsonSkus(groups);
+}
+
+function getEmbeddedProducts() {
+    return Array.isArray(EMBEDDED_PRODUCTS) ? EMBEDDED_PRODUCTS : [];
+}
+
+function selectProductsForGeneration(products, orderList, infoMap) {
+    return requireShared("PtechProducts").selectProductsForGeneration(products, orderList, infoMap);
+}
+
+function isBoxInfoMap(infoMap) {
+    return requireShared("PtechDiagnostics").isBoxInfoMap(infoMap);
+}
+
+function selectGroupedProductsByOrder(products, orderList) {
+    return requireShared("PtechProducts").selectGroupedProductsByOrder(products, orderList);
+}
+
+function summarizeSkuDiff(jsonSkus, infoMap) {
+    return requireShared("PtechDiagnostics").summarizeSkuDiff(jsonSkus, infoMap);
+}
+
+function calculateBoxDiscountPercent(priceRaw, boxPriceRaw) {
+    return requireShared("PtechDiscounts").calculateBoxDiscountPercent(priceRaw, boxPriceRaw);
 }
 
 async function ensureProxyWarm() {
@@ -650,7 +724,6 @@ async function ensureProxyWarm() {
             updateProgress(0, 1, "Поднимаем прокси...", "Первый запрос");
             await fetch(PROXY_HOST, { method: "GET" });
         } catch (err) {
-            // Даже если статус не доступен, продолжаем; первый запрос к изображениям разбудит прокси
             logMessage("Прокси проснулся не сразу: " + (err?.message || err));
         }
     })();
@@ -660,23 +733,24 @@ async function ensureProxyWarm() {
 // --- ОБРАБОТКА СООБЩЕНИЙ ИЗ CODE.TS ---
 window.onmessage = (e) => {
     const msg = e.data.pluginMessage;
-    
+
     if (msg.type === 'progress') {
         showProgress(true);
-        // Сообщение вида: "Верстка: 5 / 10"
         updateProgress(msg.curr, msg.total, "Верстка макета...", `Карточка ${msg.curr} из ${msg.total}`);
     }
 
     if (msg.type === 'log') {
         logMessage(msg.text);
     }
-    
+
     if (msg.type === 'complete') {
-        updateProgress(100, 100, "Готово!", msg.text);
+        const finalText = buildFinalGenerationSummary(msg.report, lastGenerationStats) || msg.text || "Готово";
+        updateProgress(100, 100, "Готово!", finalText);
         if (msg.report) {
-            logMessage(`Готово: страниц ${msg.report.pages}, листовок ${msg.report.leaflets}`);
-            for (const run of msg.report.runs || []) {
-                logMessage(`${run.title}: страниц ${run.pages}, товаров ${run.products}`);
+            logMessage(finalText);
+            const adSizes = (msg.report.runs || []).flatMap(run => run.adSizes || []);
+            if (adSizes.length > 0) {
+                logMessage(`Рекламные места: ${adSizes.join("; ")}`);
             }
         } else if (msg.text) {
             logMessage(msg.text);
@@ -686,7 +760,7 @@ window.onmessage = (e) => {
             showProgress(false);
         }, 500);
     }
-    
+
     if (msg.type === 'error') {
         showError(msg.text);
         disableButtons(false);
@@ -709,17 +783,8 @@ window.onmessage = (e) => {
 
     if (msg.type === 'google-sheets-result') {
         const sheets = msg.sheets || [];
-        const select = document.getElementById('googleSheetSelect');
-        if (select) {
-            select.innerHTML = '<option value="">Лист не выбран</option>';
-            for (const sheet of sheets) {
-                const option = document.createElement('option');
-                option.value = String(sheet.gid || "");
-                option.textContent = String(sheet.name || sheet.gid || "");
-                select.appendChild(option);
-            }
-        }
-        logMessage(`Google листов: ${sheets.length}`);
+        googleSheetsList = sheets;
+        refreshGoogleSheetSelects();
         if (sheets.length === 0) {
             showError("Google не вернул листы");
         } else {
@@ -732,20 +797,32 @@ window.onmessage = (e) => {
     }
 
     if (msg.type === 'google-csv-result') {
-        googleOrderCsvText = msg.csv || "";
-        googleOrderSheetName = msg.sheetName || "";
-        const parsedOrder = parseOrderFileBest([googleOrderCsvText]);
+        const requestId = msg.requestId || "primary";
+        const csvText = msg.csv || "";
+        const sheetName = msg.sheetName || "";
+        const gid = msg.gid || "";
+        const parsedOrder = parseOrderFileBest([csvText]);
+        googleLoadedSheets.set(requestId, {
+            id: requestId,
+            gid,
+            sheetName,
+            promoType: detectPromoTypeFromSheetName(sheetName || gid || ""),
+            csv: csvText,
+            parsedOrder
+        });
+        syncPrimaryGoogleState();
         currentOrderInfoMap = parsedOrder.infoMap;
-        updateOrderSummary(currentOrderInfoMap, currentJsonCount);
-        const columns = detectCsvColumns(googleOrderCsvText);
+        updateCombinedOrderSummary();
+        const columns = detectCsvColumns(csvText);
         if (columns) {
+            const boxCols = [columns.boxPrice, columns.multiplicity, columns.boxQty, columns.boxNotice].filter(Boolean).join(", ");
             logMessage(`CSV колонки: код=${columns.code || "-"}, листовка=${columns.leaflet || columns.group || "-"}, цена=${columns.price || "-"}`);
+            if (boxCols) logMessage(`Коробочные колонки: ${boxCols}`);
         }
         const label = document.getElementById('orderFileName');
-        if (label) label.textContent = `Google: ${googleOrderSheetName || msg.gid || "лист"}`;
-        logMessage(`Загружен лист Google: ${googleOrderSheetName || msg.gid || "лист"}`);
+        if (label) label.textContent = getLoadedSheetsLabel();
         logCatalogSheetCheck(getEmbeddedProducts(), parsedOrder);
-        updateProgress(100, 100, "Готово", "CSV загружен");
+        updateProgress(100, 100, "Готово", "Лист загружен");
         setTimeout(() => {
             disableButtons(false);
             showProgress(false);
@@ -759,10 +836,7 @@ window.onmessage = (e) => {
         const ok = confirm(`Карточка "${name}" выше колонки (${Math.round(h)} > ${Math.round(col)}). Разбить?`);
         parent.postMessage({ pluginMessage: { type: 'split-response', id: msg.id, split: ok } }, '*');
     }
-
-    
 };
-
 
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 function cleanPrice(rawPrice) {
@@ -854,241 +928,6 @@ function closeSettings() {
     if (modal) modal.classList.remove('show');
 }
 
-function readFileAsText(file, encoding = 'utf-8') {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsText(file, encoding);
-    });
-}
-
-function parseCsvAuto(text) {
-    if (!text) return [];
-
-    const tryDelims = ["\t", ";", ","];
-    let bestRows = [];
-    let bestCols = 0;
-
-    for (const delim of tryDelims) {
-        const rows = parseCsv(text, delim);
-        const first = rows.find(r => r.some(c => c.trim() !== "")) || [];
-        const cols = first.length;
-        if (cols > bestCols) {
-            bestCols = cols;
-            bestRows = rows;
-        }
-    }
-
-    return bestRows;
-}
-
-function parseCsv(text, delimiter) {
-    const rows = [];
-    let row = [];
-    let field = "";
-    let inQuotes = false;
-
-    for (let i = 0; i < text.length; i++) {
-        const char = text[i];
-        const next = text[i + 1];
-
-        if (char === '"') {
-            if (inQuotes && next === '"') {
-                field += '"';
-                i++;
-            } else {
-                inQuotes = !inQuotes;
-            }
-        } else if (char === delimiter && !inQuotes) {
-            row.push(field);
-            field = "";
-        } else if ((char === '\n' || char === '\r') && !inQuotes) {
-            if (char === '\r' && next === '\n') i++;
-            row.push(field);
-            rows.push(row);
-            row = [];
-            field = "";
-        } else {
-            field += char;
-        }
-    }
-    row.push(field);
-    rows.push(row);
-    return rows;
-}
-
-function normalizeHeader(text) {
-    if (!text) return "";
-    return text
-        .replace(/^\uFEFF/, "")
-        .replace(/\u00A0/g, " ")
-        .toLowerCase()
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
-function findHeader(headers, matcher) {
-    return headers.findIndex(h => matcher(normalizeHeader(h)));
-}
-
-function parseUpdateInfo(csvText) {
-    const map = {};
-    if (!csvText) return map;
-    const rows = parseCsvAuto(csvText);
-
-    let headerIndex = -1;
-    let headers = [];
-    for (let i = 0; i < rows.length; i++) {
-        const cols = rows[i].map(c => normalizeHeader(c));
-        const codeIdx = cols.findIndex(c => c === 'код');
-        if (codeIdx !== -1) {
-            headerIndex = i;
-            headers = cols;
-            break;
-        }
-    }
-    if (headerIndex === -1) return map;
-
-    const codeCol = findHeader(headers, h => h === 'код');
-    const discountCol = findHeader(headers, h => h === 'скидка без условий');
-    const priceCol = findHeader(headers, h => h === 'базовая цена');
-    const conditionsCol = findHeader(headers, h => h === 'условия');
-    const leafletCol = findHeader(headers, h =>
-        h === 'название листовки' ||
-        (h.includes('название') && h.includes('листов')) ||
-        h === 'листовка'
-    );
-    const groupCol = findHeader(headers, h => h === 'группа товара');
-
-    for (let i = headerIndex + 1; i < rows.length; i++) {
-        const cols = rows[i];
-        if (!cols || cols.length === 0) continue;
-        const sku = codeCol !== -1 ? (cols[codeCol] || "").trim() : "";
-        if (!sku) continue;
-        const discount = discountCol !== -1 ? (cols[discountCol] || "").trim() : "";
-        const price = priceCol !== -1 ? (cols[priceCol] || "").trim() : "";
-        const conditions = conditionsCol !== -1 ? (cols[conditionsCol] || "").trim() : "";
-        const surpriseText = detectSurpriseText([conditions, discount, cols.join(" ")]);
-        const leafletName = leafletCol !== -1
-            ? (cols[leafletCol] || "").trim()
-            : (groupCol !== -1 ? (cols[groupCol] || "").trim() : "");
-        map[sku] = { discount, price, conditions, surpriseText, leafletName };
-    }
-    return map;
-}
-
-function detectSurpriseText(values) {
-    const text = values
-        .filter(Boolean)
-        .map(v => String(v))
-        .join(" ")
-        .replace(/\u00A0/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-    if (!text) return "";
-
-    const normalized = text.toLowerCase();
-    const giftWords = /(подар|бесплат|free|0\s*руб)/i;
-    if (!giftWords.test(normalized)) return "";
-
-    const patterns = [
-        /кажд[а-яё]*\s+(\d{1,3})\s*[-–—]?\s*(?:я|ая|й|ый|ой|ю)?(?=$|[\s.,;:!?)])/i,
-        /(\d{1,3})\s*[-–—]?\s*(?:я|ая|й|ый|ой)(?=$|[\s.,;:!?)]).{0,40}(?:подар|бесплат|free|0\s*руб)/i,
-        /(?:подар|бесплат|free|0\s*руб).{0,40}?(\d{1,3})\s*[-–—]?\s*(?:я|ая|й|ый|ой)?(?=$|[\s.,;:!?)])/i
-    ];
-
-    for (const pattern of patterns) {
-        const match = normalized.match(pattern);
-        if (!match) continue;
-        const count = Number(match[1]);
-        if (Number.isFinite(count) && count > 1 && count < 100) {
-            return `каждая ${count}-я в подарок`;
-        }
-    }
-
-    return "";
-}
-
-function detectCsvColumns(csvText) {
-    const rows = parseCsvAuto(csvText);
-    for (let i = 0; i < rows.length; i++) {
-        const headers = rows[i].map(c => normalizeHeader(c));
-        if (headers.includes('код')) {
-            return {
-                code: headers[findHeader(headers, h => h === 'код')] || "",
-                discount: headers[findHeader(headers, h => h === 'скидка без условий')] || "",
-                price: headers[findHeader(headers, h => h === 'базовая цена')] || "",
-                conditions: headers[findHeader(headers, h => h === 'условия')] || "",
-                leaflet: headers[findHeader(headers, h => h === 'название листовки' || (h.includes('название') && h.includes('листов')) || h === 'листовка')] || "",
-                group: headers[findHeader(headers, h => h === 'группа товара')] || ""
-            };
-        }
-    }
-    return null;
-}
-
-function collectJsonSkus(groups) {
-    const skus = new Set();
-    for (const group of Array.isArray(groups) ? groups : []) {
-        const variants = Array.isArray(group?.variants) ? group.variants : [];
-        for (const variant of variants) {
-            if (variant?.sku) skus.add(String(variant.sku).trim());
-        }
-    }
-    return skus;
-}
-
-function getEmbeddedProducts() {
-    return Array.isArray(EMBEDDED_PRODUCTS) ? EMBEDDED_PRODUCTS : [];
-}
-
-function buildProductSkuIndex(products) {
-    const index = new Map();
-    for (const item of Array.isArray(products) ? products : []) {
-        const variants = Array.isArray(item?.variants) ? item.variants : [];
-        for (const variant of variants) {
-            const sku = variant?.sku ? String(variant.sku).trim() : "";
-            if (sku && !index.has(sku)) index.set(sku, { item, variant });
-        }
-    }
-    return index;
-}
-
-function selectProductsByOrder(products, orderList) {
-    if (!Array.isArray(orderList) || orderList.length === 0) return [];
-    const index = buildProductSkuIndex(products);
-    const selected = [];
-    const seen = new Set();
-    for (const rawSku of orderList) {
-        const sku = String(rawSku || "").trim();
-        const match = index.get(sku);
-        if (!match) continue;
-        const key = sku;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        selected.push({
-            ...match.item,
-            id: `${match.item?.id || "product"}:${sku}`,
-            variants: [match.variant]
-        });
-    }
-    return selected;
-}
-
-function summarizeSkuDiff(jsonSkus, infoMap) {
-    const csvSkus = new Set(Object.keys(infoMap || {}).map(s => String(s).trim()));
-    let csvMissingInJson = 0;
-    let jsonMissingInCsv = 0;
-    for (const sku of csvSkus) {
-        if (!jsonSkus.has(sku)) csvMissingInJson++;
-    }
-    for (const sku of jsonSkus) {
-        if (!csvSkus.has(sku)) jsonMissingInCsv++;
-    }
-    return { csvMissingInJson, jsonMissingInCsv };
-}
-
 function pickLeafletTestGroups(jsonData, infoMap, maxPerLeaflet = 2) {
     const selected = [];
     const counts = new Map();
@@ -1129,11 +968,11 @@ function buildLeafletCounts(sourceGroups, infoMap) {
     return { leafletCounts, withoutLeaflet };
 }
 
-function estimateCardHeightForItem(item) {
+function estimateCardHeightForItem(item, settings = DEFAULT_SETTINGS) {
     const rows = Array.isArray(item?.variants) ? item.variants.length : 0;
-    const minCardHeight = 135;
-    const baseRows = 6;
-    const rowGrowth = 10;
+    const minCardHeight = Number(settings?.MIN_CARD_HEIGHT) || 135;
+    const baseRows = Number(settings?.BASE_CARD_ROWS) || 6;
+    const rowGrowth = Number(settings?.ESTIMATED_ROW_HEIGHT) || 10;
     if (rows <= baseRows) return minCardHeight;
     return minCardHeight + ((rows - baseRows) * rowGrowth);
 }
@@ -1148,7 +987,7 @@ function estimatePagesForGroups(groups, settings, useCoverShift) {
     let colHeights = [shift, shift];
     const maxH = Math.max(1, a4h - (padY * 2));
     for (const item of groups) {
-        const cardH = estimateCardHeightForItem(item);
+        const cardH = estimateCardHeightForItem(item, settings);
         const need = cardH + (colHeights[colIndex] > shift ? itemGap : 0);
         if (colHeights[colIndex] + need > maxH) {
             if (colIndex === 0) {
@@ -1182,18 +1021,26 @@ function logLeafletPreviewAndPageEstimate(sourceGroups, infoMap) {
 function logPreflight(jsonData, infoMap, sourceGroups) {
     const jsonSkus = collectJsonSkus(jsonData);
     const diff = summarizeSkuDiff(jsonSkus, infoMap);
-    const { leafletCounts } = buildLeafletCounts(sourceGroups, infoMap);
+    const isBox = isBoxInfoMap(infoMap);
+    const { leafletCounts } = isBox ? { leafletCounts: new Map() } : buildLeafletCounts(sourceGroups, infoMap);
     let surpriseCount = 0;
     for (const item of sourceGroups) {
         const mainSku = item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null;
         if (resolveSurpriseText(mainSku, item, infoMap)) surpriseCount++;
     }
-    logMessage(`JSON товаров: ${Array.isArray(jsonData) ? jsonData.length : 0}, к генерации: ${sourceGroups.length}`);
-    logMessage(`CSV строк: ${Object.keys(infoMap || {}).length}, листовок в текущем наборе: ${leafletCounts.size}`);
-    logLeafletPreviewAndPageEstimate(sourceGroups, infoMap);
+    if (isBox) {
+        const rowsCount = sourceGroups.reduce((sum, item) => sum + (Array.isArray(item?.variants) ? item.variants.length : 0), 0);
+        logMessage(`Тип акции: коробочная`);
+        logMessage(`К генерации: ${sourceGroups.length} карточек, ${rowsCount} строк`);
+        logMessage(`CSV строк: ${Object.keys(infoMap || {}).length}`);
+    } else {
+        logMessage(`К генерации: ${sourceGroups.length} товаров`);
+        logMessage(`CSV строк: ${Object.keys(infoMap || {}).length}, листовок в текущем наборе: ${leafletCounts.size}`);
+        logLeafletPreviewAndPageEstimate(sourceGroups, infoMap);
+    }
     if (surpriseCount > 0) logMessage(`Подарочные условия: ${surpriseCount}`);
-    if (diff.csvMissingInJson || diff.jsonMissingInCsv) {
-        logMessage(`Сверка SKU: в CSV не в JSON ${diff.csvMissingInJson}, в JSON не в CSV ${diff.jsonMissingInCsv}`);
+    if (diff.csvMissingInJson) {
+        logMessage(`Сверка SKU: в CSV не найдено в JSON ${diff.csvMissingInJson}`);
     }
 }
 
@@ -1206,6 +1053,13 @@ function hasDiscountForItem(mainSku, item, infoMap) {
     });
 }
 
+function hasInfoValueForItem(mainSku, item, infoMap, fields) {
+    const hasValue = sku => fields.some(field => String(infoMap?.[sku]?.[field] || "").trim());
+    if (mainSku && hasValue(mainSku)) return true;
+    const variants = Array.isArray(item?.variants) ? item.variants : [];
+    return variants.some(variant => variant?.sku && hasValue(variant.sku));
+}
+
 function getProblemSku(mainSku, item) {
     if (mainSku) return String(mainSku);
     const variants = Array.isArray(item?.variants) ? item.variants : [];
@@ -1214,15 +1068,23 @@ function getProblemSku(mainSku, item) {
 }
 
 function collectDataProblems(jsonData, infoMap, sourceGroups, imageResults = null) {
+    if (window.PtechDiagnostics && window.PtechProducts) {
+        return window.PtechDiagnostics.collectDataProblems(jsonData, infoMap, sourceGroups, imageResults, BRAND_IDS);
+    }
     const jsonSkus = collectJsonSkus(jsonData);
     const csvSkus = new Set(Object.keys(infoMap || {}).map(s => String(s).trim()).filter(Boolean));
+    const isBox = isBoxInfoMap(infoMap);
     const problems = {
         noPhoto: [],
         noDiscount: [],
+        noPrice: [],
+        noBoxPrice: [],
+        noBoxQty: [],
         noLeaflet: [],
         unknownBrand: [],
         jsonMissingInCsv: [],
-        csvMissingInJson: []
+        csvMissingInJson: [],
+        duplicateSkus: Array.isArray(infoMap?.__duplicateSkus) ? infoMap.__duplicateSkus : []
     };
     for (const sku of jsonSkus) {
         if (!csvSkus.has(sku)) problems.jsonMissingInCsv.push(sku);
@@ -1236,8 +1098,14 @@ function collectDataProblems(jsonData, infoMap, sourceGroups, imageResults = nul
         const mainSku = item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null;
         const label = getProblemSku(mainSku, item);
         if (imageResults && !imageResults[i]) problems.noPhoto.push(label);
-        if (!hasDiscountForItem(mainSku, item, infoMap)) problems.noDiscount.push(label);
-        if (!resolveLeafletName(mainSku, item, infoMap)) problems.noLeaflet.push(label);
+        if (isBox) {
+            if (!hasInfoValueForItem(mainSku, item, infoMap, ["boxPrice", "price"])) problems.noBoxPrice.push(label);
+            if (!hasInfoValueForItem(mainSku, item, infoMap, ["multiplicity", "boxQty"])) problems.noBoxQty.push(label);
+        } else {
+            if (!hasDiscountForItem(mainSku, item, infoMap)) problems.noDiscount.push(label);
+            if (!hasInfoValueForItem(mainSku, item, infoMap, ["price"])) problems.noPrice.push(label);
+            if (!resolveLeafletName(mainSku, item, infoMap)) problems.noLeaflet.push(label);
+        }
         const brand = item?.brand !== undefined && item?.brand !== null ? String(item.brand) : "";
         if (brand && !BRAND_IDS.has(brand)) problems.unknownBrand.push(`${label} (brand ${brand})`);
     }
@@ -1245,33 +1113,299 @@ function collectDataProblems(jsonData, infoMap, sourceGroups, imageResults = nul
 }
 
 function logProblemList(title, items) {
-    logMessage(`${title}: ${items.length}`);
-    if (items.length > 0) {
-        logMessage(`  ${items.slice(0, 20).join(", ")}${items.length > 20 ? " ..." : ""}`);
-    }
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return false;
+    logMessage(`${title}: ${list.length}`);
+    return true;
+}
+
+function logProblemListWithSku(title, items, limit = 40) {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return false;
+    logMessage(`${title}: ${list.length}`);
+    const shown = list.slice(0, limit).join(", ");
+    const suffix = list.length > limit ? " ..." : "";
+    logMessage(`${shown}${suffix}`);
+    return true;
 }
 
 function logDataProblemReport(jsonData, infoMap, sourceGroups, imageResults = null) {
     const problems = collectDataProblems(jsonData, infoMap, sourceGroups, imageResults);
+    const isBox = isBoxInfoMap(infoMap);
+    let hasProblems = false;
     logMessage("Отчет по проблемам:");
     if (imageResults) {
-        logProblemList("Без фото", problems.noPhoto);
-    } else {
-        logMessage("Без фото: не проверялось");
+        hasProblems = logProblemListWithSku("Без фото", problems.noPhoto) || hasProblems;
     }
-    logProblemList("Без скидки в CSV", problems.noDiscount);
-    logProblemList("Без листовки", problems.noLeaflet);
-    logProblemList("Неизвестный бренд", problems.unknownBrand);
-    logProblemList("JSON SKU без строки CSV", problems.jsonMissingInCsv);
-    logProblemList("CSV SKU без товара JSON", problems.csvMissingInJson);
+    if (isBox) {
+        hasProblems = logProblemListWithSku("Без коробочной цены", problems.noBoxPrice) || hasProblems;
+        hasProblems = logProblemListWithSku("Без кратности", problems.noBoxQty) || hasProblems;
+        hasProblems = logProblemListWithSku("Без пары цен для выгоды", problems.noBoxDiscountPair || []) || hasProblems;
+        const benefit = problems.boxBenefit || {};
+        if (benefit.suspicious > 0) {
+            logMessage(`Цена коробкой выше/равна базовой: ${benefit.suspicious}`);
+            hasProblems = true;
+        }
+        if (benefit.invalidPrice > 0) {
+            logMessage(`Некорректные цены: ${benefit.invalidPrice}`);
+            hasProblems = true;
+        }
+    } else {
+        hasProblems = logProblemListWithSku("Без скидки в CSV", problems.noDiscount) || hasProblems;
+        hasProblems = logProblemListWithSku("Без цены", problems.noPrice) || hasProblems;
+        hasProblems = logProblemListWithSku("Без листовки", problems.noLeaflet) || hasProblems;
+    }
+    hasProblems = logProblemListWithSku("Дубли SKU в таблице", problems.duplicateSkus) || hasProblems;
+    hasProblems = logProblemListWithSku("Неизвестный бренд", problems.unknownBrand) || hasProblems;
+    hasProblems = logProblemListWithSku("Некорректная цена", problems.invalidPrice || []) || hasProblems;
+    hasProblems = logProblemListWithSku("Подозрительная скидка", problems.suspiciousDiscount || []) || hasProblems;
+    hasProblems = logProblemListWithSku("Коробочная цена выше/равна базовой", problems.suspiciousBoxPrice || []) || hasProblems;
+    hasProblems = logProblemListWithSku("CSV SKU без товара JSON", problems.csvMissingInJson) || hasProblems;
+    if (!hasProblems) logMessage("Проблем не найдено");
+}
+
+function getQualityGateErrors(context) {
+    if (window.PtechDiagnostics) return window.PtechDiagnostics.getQualityGateErrors(context);
+    return [];
+}
+
+function assertQualityGates(context) {
+    const errors = getQualityGateErrors(context);
+    if (errors.length > 0) {
+        throw new Error(errors.join("; "));
+    }
 }
 
 function logCatalogSheetCheck(products, parsedOrder) {
     const orderList = parsedOrder?.orderList || [];
     const infoMap = parsedOrder?.infoMap || {};
-    const sourceGroups = selectProductsByOrder(products, orderList);
+    const sourceGroups = selectProductsForGeneration(products, orderList, infoMap);
     logPreflight(products, infoMap, sourceGroups);
     logDataProblemReport(products, infoMap, sourceGroups, null);
+}
+
+function createBuildContext(jsonData, parsedOrder, options = {}, limitCount = null) {
+    const orderList = parsedOrder.orderList || [];
+    const infoMap = parsedOrder.infoMap || {};
+    const orderedProducts = selectProductsForGeneration(jsonData, orderList, infoMap);
+    const total = orderedProducts.length;
+    const sourceGroups = options.leafletSample
+        ? pickLeafletTestGroups(orderedProducts, infoMap, 2)
+        : orderedProducts.slice(0, limitCount && Number.isFinite(limitCount) ? Math.min(total, limitCount) : total);
+    return {
+        products: jsonData,
+        orderList,
+        infoMap,
+        orderedProducts,
+        sourceGroups,
+        isBox: isBoxInfoMap(infoMap)
+    };
+}
+
+function buildFigmaPayloadGroups(sourceGroups, mainSkus, imageResults, infoMap, promoType = "auto") {
+    const processedGroups = [];
+    for (let i = 0; i < sourceGroups.length; i++) {
+        const item = sourceGroups[i];
+        const mainSku = mainSkus[i];
+        const media = normalizeProductMediaResult(imageResults[i]);
+        const imageBytes = media.imageBytes;
+        const productUrl = media.url || null;
+        const videoUrl = extractFirstVideoUrl(item);
+        const mainDiscount = mainSku && infoMap[mainSku] ? infoMap[mainSku].discount : null;
+        const mainConditions = mainSku && infoMap[mainSku] ? infoMap[mainSku].conditions : null;
+        const mainSurprise = resolveSurpriseText(mainSku, item, infoMap);
+        const mainLeafletName = resolveLeafletName(mainSku, item, infoMap);
+        const mainMultiplicity = resolveInfoField(mainSku, item, infoMap, 'multiplicity');
+        const mainBoxQty = mainMultiplicity || resolveInfoField(mainSku, item, infoMap, 'boxQty');
+        const mainBoxPrice = resolveInfoField(mainSku, item, infoMap, 'boxPrice') || (mainSku && infoMap[mainSku] ? infoMap[mainSku].price : null);
+        const mainBoxNotice = resolveInfoField(mainSku, item, infoMap, 'boxNotice');
+        const isBoxCard = promoType === "box" || (promoType === "auto" && hasBoxInfo(mainSku, item, infoMap));
+        const mainPrice = mainSku && infoMap[mainSku] ? infoMap[mainSku].price : null;
+        const boxDiscount = isBoxCard ? calculateBoxDiscountPercent(mainPrice, mainBoxPrice) : null;
+        processedGroups.push({
+            cardType: isBoxCard ? "box" : "default",
+            headerName: item.title,
+            descriptionText: item.description,
+            imageBytes,
+            discountText: isBoxCard ? (boxDiscount !== null ? String(boxDiscount) : null) : (mainDiscount || null),
+            discountInfoText: mainSurprise ? null : (mainConditions || null),
+            surpriseText: mainSurprise || null,
+            boxPriceText: mainBoxPrice || null,
+            multiplicityText: mainMultiplicity || null,
+            boxQtyText: mainBoxQty || null,
+            boxNoticeText: mainBoxNotice || null,
+            videoUrl,
+            productUrl,
+            mainSku,
+            leafletName: mainLeafletName || null,
+            brandId: item.brand,
+            items: item.variants.map(v => ({
+                sku: v.sku,
+                specs: v.specs,
+                min: v.min,
+                qty: v.qty,
+                price: cleanPrice(v.price),
+                discount: infoMap?.[v.sku]?.discount || null,
+                boxPrice: infoMap?.[v.sku]?.boxPrice || infoMap?.[v.sku]?.price || null,
+                multiplicity: infoMap?.[v.sku]?.multiplicity || null,
+                boxQty: infoMap?.[v.sku]?.boxQty || null,
+                boxNotice: infoMap?.[v.sku]?.boxNotice || null,
+                productUrl
+            }))
+        });
+    }
+    return processedGroups;
+}
+
+function normalizeProductMediaResult(result) {
+    if (!result) return { imageBytes: null, url: null, category: null };
+    if (result instanceof Uint8Array) return { imageBytes: result, url: null, category: null };
+    return {
+        imageBytes: result.imageBytes || null,
+        url: normalizeUrl(result.url || result.productUrl || ""),
+        category: result.category || null
+    };
+}
+
+function getImageBytesResults(mediaResults) {
+    return (mediaResults || []).map(result => normalizeProductMediaResult(result).imageBytes || null);
+}
+
+function countLoadedImages(mediaResults) {
+    return getImageBytesResults(mediaResults).filter(Boolean).length;
+}
+
+function extractFirstVideoUrl(item) {
+    const variants = Array.isArray(item?.variants) ? item.variants : [];
+    for (const variant of variants) {
+        const url = extractVideoUrlFromVariant(variant);
+        if (url) return url;
+    }
+    return null;
+}
+
+function extractVideoUrlFromVariant(variant) {
+    const raw = getVariantPropertyValue(variant, "Видео");
+    if (!raw) return null;
+    const text = String(raw);
+    const srcMatch = text.match(/\bsrc\\?=\\?[\"']([^\"']+)[\"']/i) || text.match(/\bsrc\s*=\s*[\"']([^\"']+)[\"']/i);
+    return normalizeUrl(srcMatch ? srcMatch[1] : text);
+}
+
+function getVariantPropertyValue(variant, propertyName) {
+    const target = normalizePropertyName(propertyName);
+    const props = Array.isArray(variant?.properties) ? variant.properties : [];
+    for (const prop of props) {
+        if (normalizePropertyName(prop?.propertyname) === target) {
+            return prop?.propertyvalue;
+        }
+    }
+    return "";
+}
+
+function normalizePropertyName(value) {
+    return String(value || "")
+        .replace(/[:：]+$/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+}
+
+function normalizeUrl(value) {
+    const text = String(value || "").replace(/\\\//g, "/").trim();
+    return /^https?:\/\//i.test(text) ? text : "";
+}
+
+function getMainSkusForGroups(sourceGroups) {
+    return sourceGroups.map(item => (
+        item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null
+    ));
+}
+
+function createSheetContexts(jsonData, options = {}, limitCount = null) {
+    const loaded = getLoadedGoogleSheets();
+    if (loaded.length === 0) return [];
+    return loaded.map(sheet => {
+        const parsedOrder = sheet.parsedOrder || parseOrderFileBest([sheet.csv]);
+        const context = createBuildContext(jsonData, parsedOrder, options, limitCount);
+        return {
+            id: sheet.id,
+            title: sheet.sheetName || sheet.gid || "Google лист",
+            promoType: detectPromoTypeFromSheetName(sheet.sheetName || sheet.gid || ""),
+            csv: sheet.csv,
+            parsedOrder,
+            context
+        };
+    });
+}
+
+function detectPromoTypeFromSheetName(name) {
+    const text = String(name || "").toLowerCase();
+    if (text.includes("короб")) return "box";
+    if (text.includes("фикс") || /\bfix\b/.test(text)) return "fixed";
+    return "common";
+}
+
+function getPromoTypeLabel(promoType) {
+    if (promoType === "box") return "коробочная";
+    if (promoType === "fixed") return "фикс";
+    return "обычная";
+}
+
+function mergeSheetContextsInfoMap(sheetContexts) {
+    return mergeInfoMaps(sheetContexts.map(item => item.context?.infoMap || {}));
+}
+
+function buildMultiRunPayload(sheetContexts, allImageResults) {
+    const runs = [];
+    let imageOffset = 0;
+    for (const sheet of sheetContexts) {
+        const sourceGroups = sheet.context.sourceGroups;
+        const mainSkus = getMainSkusForGroups(sourceGroups);
+        const imageSlice = allImageResults.slice(imageOffset, imageOffset + sourceGroups.length);
+        imageOffset += sourceGroups.length;
+        const groups = buildFigmaPayloadGroups(sourceGroups, mainSkus, imageSlice, sheet.context.infoMap, sheet.promoType);
+        if (sheet.promoType === "common") {
+            runs.push({
+                title: sheet.title,
+                groups,
+                orderList: sheet.context.orderList,
+                infoMap: sheet.context.infoMap,
+                promoType: sheet.promoType
+            });
+
+            const byLeaflet = new Map();
+            for (const group of groups) {
+                const title = String(group.leafletName || "").replace(/\s+/g, " ").trim();
+                if (!title) continue;
+                const key = normalizeLeafletKey(title);
+                const entry = byLeaflet.get(key) || { title, groups: [] };
+                entry.groups.push(group);
+                byLeaflet.set(key, entry);
+            }
+            if (byLeaflet.size > 1) {
+                for (const entry of byLeaflet.values()) {
+                    runs.push({
+                        title: entry.title,
+                        groups: entry.groups,
+                        orderList: sheet.context.orderList,
+                        infoMap: sheet.context.infoMap,
+                        promoType: sheet.promoType
+                    });
+                }
+            }
+            continue;
+        }
+
+        runs.push({
+            title: sheet.title,
+            groups,
+            orderList: sheet.context.orderList,
+            infoMap: sheet.context.infoMap,
+            promoType: sheet.promoType
+        });
+    }
+    return runs;
 }
 
 function countLeafletNames(infoMap) {
@@ -1295,11 +1429,188 @@ function parseOrderFileBest(texts) {
     return best;
 }
 
-async function getOrderTexts() {
-    if (googleOrderCsvText) {
-        return [googleOrderCsvText];
+function getLoadedGoogleSheets() {
+    return [...googleLoadedSheets.values()].filter(item => item && item.csv);
+}
+
+function getLoadedSheetsLabel() {
+    const loaded = getLoadedGoogleSheets();
+    if (loaded.length === 0) return "Лист не загружен";
+    if (loaded.length === 1) return `Лист загружен: ${loaded[0].sheetName || loaded[0].gid || "Google"}`;
+    return `Листов загружено: ${loaded.length}`;
+}
+
+function syncPrimaryGoogleState() {
+    const loaded = getLoadedGoogleSheets();
+    const primary = googleLoadedSheets.get("primary") || loaded[0] || null;
+    googleOrderCsvText = primary?.csv || "";
+    googleOrderSheetName = primary?.sheetName || "";
+}
+
+function mergeInfoMaps(maps) {
+    const merged = {};
+    for (const map of maps) {
+        for (const [sku, entry] of Object.entries(map || {})) {
+            if (sku === "__duplicateSkus") {
+                const next = Array.isArray(entry) ? entry : [];
+                merged.__duplicateSkus = [...(merged.__duplicateSkus || []), ...next];
+                continue;
+            }
+            merged[sku] = entry;
+        }
     }
-    return [];
+    return merged;
+}
+
+function updateCombinedOrderSummary() {
+    const loaded = getLoadedGoogleSheets();
+    if (loaded.length === 0) {
+        currentOrderInfoMap = {};
+        updateOrderSummary(currentOrderInfoMap, currentJsonCount);
+        return;
+    }
+    if (loaded.length > 1) {
+        currentOrderInfoMap = mergeInfoMaps(loaded.map(item => item.parsedOrder?.infoMap || {}));
+        updateMultiSheetSummary(loaded);
+        return;
+    }
+    const infoMap = mergeInfoMaps(loaded.map(item => item.parsedOrder?.infoMap || {}));
+    currentOrderInfoMap = infoMap;
+    updateOrderSummary(infoMap, currentJsonCount, loaded[0]?.promoType || "auto");
+    appendSingleSheetValidation(loaded[0]);
+}
+
+function updateMultiSheetSummary(loadedSheets) {
+    const summary = document.getElementById('orderSummary');
+    if (!summary) return;
+    const rows = loadedSheets.map(sheet => {
+        const infoMap = sheet.parsedOrder?.infoMap || {};
+        const entries = Object.entries(infoMap);
+        const leafletCounts = new Map();
+        for (const [, entry] of entries) {
+            const name = String(entry?.leafletName || "").trim();
+            if (name) addLeafletCount(leafletCounts, name);
+        }
+        const validation = getLoadedSheetValidation(sheet);
+        const details = sheet.promoType === "common"
+            ? `листовок: ${leafletCounts.size}`
+            : `строк: ${entries.length}`;
+        return `
+            <div style="margin-top: 6px;">
+                <strong>${escapeHtml(sheet.sheetName || sheet.gid || "Google лист")}</strong><br>
+                Тип: ${escapeHtml(getPromoTypeLabel(sheet.promoType))}, товаров: ${entries.length}, ${details}<br>
+                ${validation.ok ? "Готово к генерации" : `Есть проблемы: ${validation.count}`}
+            </div>
+        `;
+    }).join("");
+    summary.innerHTML = `
+        <div>Загружено листов: <strong>${loadedSheets.length}</strong></div>
+        ${rows}
+    `;
+    summary.classList.add('show');
+}
+
+function getLoadedSheetValidation(sheet) {
+    const jsonData = getEmbeddedProducts();
+    const parsedOrder = sheet?.parsedOrder || parseOrderFileBest([sheet?.csv || ""]);
+    const sourceGroups = selectProductsForGeneration(jsonData, parsedOrder.orderList || [], parsedOrder.infoMap || {});
+    const problems = collectDataProblems(jsonData, parsedOrder.infoMap || {}, sourceGroups, null);
+    const count = (problems.csvMissingInJson?.length || 0) +
+        (problems.duplicateSkus?.length || 0) +
+        (sheet?.promoType === "box" ? (problems.noBoxPrice?.length || 0) + (problems.noBoxQty?.length || 0) : 0) +
+        (sheet?.promoType === "common" ? (problems.noDiscount?.length || 0) + (problems.noPrice?.length || 0) : 0);
+    return { ok: count === 0 && sourceGroups.length > 0, count: sourceGroups.length > 0 ? count : count + 1 };
+}
+
+function appendSingleSheetValidation(sheet) {
+    const summary = document.getElementById('orderSummary');
+    if (!summary || !sheet) return;
+    const validation = getLoadedSheetValidation(sheet);
+    const status = validation.ok ? "Готово к генерации" : `Есть проблемы: ${validation.count}`;
+    summary.innerHTML += `<div style="margin-top: 6px;">${escapeHtml(status)}</div>`;
+    summary.classList.add('show');
+}
+
+function populateGoogleSheetSelect(select, selectedValue = "") {
+    if (!select) return;
+    const current = selectedValue || select.value || "";
+    select.innerHTML = '<option value="">Лист не выбран</option>';
+    for (const sheet of googleSheetsList || []) {
+        const option = document.createElement('option');
+        option.value = String(sheet.gid || "");
+        option.textContent = String(sheet.name || sheet.gid || "");
+        select.appendChild(option);
+    }
+    select.value = current;
+}
+
+function refreshGoogleSheetSelects() {
+    document.querySelectorAll('[data-sheet-select]').forEach(select => {
+        populateGoogleSheetSelect(select);
+    });
+}
+
+function createGoogleSheetRow() {
+    const rows = document.getElementById('googleSheetRows');
+    if (!rows) return;
+    const id = `sheet_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const row = document.createElement('div');
+    row.className = 'sheet-picker-row';
+    row.dataset.sheetRow = id;
+
+    const select = document.createElement('select');
+    select.dataset.sheetSelect = "1";
+    select.dataset.sheetId = id;
+    populateGoogleSheetSelect(select);
+    select.addEventListener('change', () => handleGoogleSheetSelection(select));
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'secondary sheet-remove-btn';
+    remove.title = "Удалить лист";
+    remove.textContent = "×";
+    remove.addEventListener('click', () => {
+        googleLoadedSheets.delete(id);
+        row.remove();
+        syncPrimaryGoogleState();
+        updateCombinedOrderSummary();
+        const label = document.getElementById('orderFileName');
+        if (label) label.textContent = getLoadedSheetsLabel();
+    });
+
+    row.appendChild(select);
+    row.appendChild(remove);
+    rows.appendChild(row);
+}
+
+function handleGoogleSheetSelection(select) {
+    const id = select?.dataset?.sheetId || "primary";
+    const gid = select?.value || "";
+    if (!gid) {
+        googleLoadedSheets.delete(id);
+        syncPrimaryGoogleState();
+        updateCombinedOrderSummary();
+        const label = document.getElementById('orderFileName');
+        if (label) label.textContent = getLoadedSheetsLabel();
+        return;
+    }
+    const duplicate = [...document.querySelectorAll('[data-sheet-select]')]
+        .some(other => other !== select && other.value === gid);
+    if (duplicate) {
+        showError("Этот Google-лист уже выбран");
+        select.value = "";
+        googleLoadedSheets.delete(id);
+        syncPrimaryGoogleState();
+        updateCombinedOrderSummary();
+        const label = document.getElementById('orderFileName');
+        if (label) label.textContent = getLoadedSheetsLabel();
+        return;
+    }
+    loadGoogleCsv(select);
+}
+
+async function getOrderTexts() {
+    return getLoadedGoogleSheets().map(item => item.csv);
 }
 
 async function loadGoogleSheets(silent = false) {
@@ -1312,10 +1623,11 @@ async function loadGoogleSheets(silent = false) {
     parent.postMessage({ pluginMessage: { type: 'google-sheets' } }, '*');
 }
 
-async function loadGoogleCsv() {
-    const select = document.getElementById('googleSheetSelect');
+async function loadGoogleCsv(select = null) {
+    select = select || document.getElementById('googleSheetSelect');
     const gid = select?.value || "";
     const sheetName = select?.selectedOptions?.[0]?.textContent || "";
+    const requestId = select?.dataset?.sheetId || "primary";
     if (!gid) {
         showError("Выберите лист Google");
         return;
@@ -1324,10 +1636,11 @@ async function loadGoogleCsv() {
     disableButtons(true);
     showProgress(true);
     updateProgress(0, 1, "Google таблица...", sheetName);
-    parent.postMessage({ pluginMessage: { type: 'google-csv', gid, sheetName } }, '*');
+    parent.postMessage({ pluginMessage: { type: 'google-csv', gid, sheetName, requestId } }, '*');
 }
 
 function resolveLeafletName(mainSku, item, infoMap) {
+    if (window.PtechDiagnostics) return window.PtechDiagnostics.resolveLeafletName(mainSku, item, infoMap);
     if (mainSku && infoMap?.[mainSku]?.leafletName) {
         return infoMap[mainSku].leafletName;
     }
@@ -1342,6 +1655,7 @@ function resolveLeafletName(mainSku, item, infoMap) {
 }
 
 function resolveSurpriseText(mainSku, item, infoMap) {
+    if (window.PtechDiagnostics) return window.PtechDiagnostics.resolveSurpriseText(mainSku, item, infoMap);
     if (mainSku && infoMap?.[mainSku]?.surpriseText) {
         return infoMap[mainSku].surpriseText;
     }
@@ -1355,7 +1669,31 @@ function resolveSurpriseText(mainSku, item, infoMap) {
     return "";
 }
 
-function updateOrderSummary(infoMap, jsonCount = null) {
+function resolveInfoField(mainSku, item, infoMap, fieldName) {
+    if (window.PtechDiagnostics) return window.PtechDiagnostics.resolveInfoField(mainSku, item, infoMap, fieldName);
+    if (mainSku && infoMap?.[mainSku]?.[fieldName]) {
+        return infoMap[mainSku][fieldName];
+    }
+    const variants = Array.isArray(item?.variants) ? item.variants : [];
+    for (const variant of variants) {
+        const sku = variant?.sku;
+        if (sku && infoMap?.[sku]?.[fieldName]) {
+            return infoMap[sku][fieldName];
+        }
+    }
+    return "";
+}
+
+function hasBoxInfo(mainSku, item, infoMap) {
+    if (window.PtechDiagnostics) return window.PtechDiagnostics.hasBoxInfo(mainSku, item, infoMap);
+    return !!(
+        resolveInfoField(mainSku, item, infoMap, 'multiplicity') ||
+        resolveInfoField(mainSku, item, infoMap, 'boxQty') ||
+        resolveInfoField(mainSku, item, infoMap, 'boxNotice')
+    );
+}
+
+function updateOrderSummary(infoMap, jsonCount = null, promoType = "auto") {
     const summary = document.getElementById('orderSummary');
     if (!summary) return;
 
@@ -1369,8 +1707,10 @@ function updateOrderSummary(infoMap, jsonCount = null) {
     const leafletCounts = new Map();
     let withoutLeaflet = 0;
     let surpriseCount = 0;
+    let boxCount = 0;
     for (const [, entry] of entries) {
         if (String(entry?.surpriseText || "").trim()) surpriseCount++;
+        if (String(entry?.multiplicity || entry?.boxQty || entry?.boxNotice || "").trim()) boxCount++;
         const name = String(entry?.leafletName || "").trim();
         if (!name) {
             withoutLeaflet++;
@@ -1383,16 +1723,29 @@ function updateOrderSummary(infoMap, jsonCount = null) {
         .sort((a, b) => a.title.localeCompare(b.title, "ru"))
         .map(item => `${escapeHtml(item.title)}: ${item.count}`)
         .join("<br>");
-    const jsonPart = Number.isFinite(jsonCount) ? `<div>JSON товаров: <strong>${jsonCount}</strong></div>` : "";
-
-    summary.innerHTML = `
-        ${jsonPart}
-        <div>CSV строк с кодами: <strong>${entries.length}</strong></div>
-        <div>Листовок: <strong>${leafletCounts.size}</strong></div>
-        <div>Подарочных условий: <strong>${surpriseCount}</strong></div>
-        <div>Без названия листовки: <strong>${withoutLeaflet}</strong></div>
-        ${leafletList ? `<div style="margin-top: 6px;">${leafletList}</div>` : ""}
-    `;
+    if (promoType === "fixed") {
+        summary.innerHTML = `
+            <div>Тип акции: <strong>фикс</strong></div>
+            <div>CSV строк с кодами: <strong>${entries.length}</strong></div>
+            ${surpriseCount > 0 ? `<div>Подарочных условий: <strong>${surpriseCount}</strong></div>` : ""}
+        `;
+    } else if (promoType === "box" || (promoType === "auto" && boxCount > 0)) {
+        summary.innerHTML = `
+            <div>Тип акции: <strong>коробочная</strong></div>
+            <div>CSV строк с кодами: <strong>${entries.length}</strong></div>
+            <div>Коробочных строк: <strong>${boxCount}</strong></div>
+            ${surpriseCount > 0 ? `<div>Подарочных условий: <strong>${surpriseCount}</strong></div>` : ""}
+        `;
+    } else {
+        summary.innerHTML = `
+            <div>Тип акции: <strong>обычная</strong></div>
+            <div>CSV строк с кодами: <strong>${entries.length}</strong></div>
+            <div>Листовок: <strong>${leafletCounts.size}</strong></div>
+            <div>Подарочных условий: <strong>${surpriseCount}</strong></div>
+            <div>Без названия листовки: <strong>${withoutLeaflet}</strong></div>
+            ${leafletList ? `<div style="margin-top: 6px;">${leafletList}</div>` : ""}
+        `;
+    }
     summary.classList.add('show');
 }
 
@@ -1407,13 +1760,8 @@ function escapeHtml(value) {
 function updateJsonSummary(jsonCount) {
     const summary = document.getElementById('jsonSummary');
     if (!summary) return;
-    if (!Number.isFinite(jsonCount)) {
-        summary.classList.remove('show');
-        summary.innerHTML = "";
-        return;
-    }
-    summary.innerHTML = `Встроенная база товаров: <strong>${jsonCount}</strong>`;
-    summary.classList.add('show');
+    summary.classList.remove('show');
+    summary.innerHTML = "";
 }
 
 function refreshJsonSummary() {
@@ -1423,34 +1771,289 @@ function refreshJsonSummary() {
 }
 
 async function fetchImageForProduct(sku, signal) {
+    for (let attempt = 0; attempt <= IMAGE_FETCH_RETRIES; attempt++) {
+        const result = await fetchImageForProductOnce(sku, signal);
+        if (result || signal?.aborted) return result;
+        if (attempt < IMAGE_FETCH_RETRIES) await delay(350);
+    }
+    return null;
+}
+
+async function fetchImageForProductOnce(sku, signal) {
     if (!sku) return null;
     try {
         if (signal?.aborted) return null;
-        if (imageCache.has(sku)) return imageCache.get(sku);
+        const cacheKey = `${sku}:${imageCacheBust}`;
+        if (imageCache.has(cacheKey)) return imageCache.get(cacheKey);
         await ensureProxyWarm();
         if (signal?.aborted) return null;
-        const apiUrl = API_BASE + sku;
-        const proxyApiUrl = PROXY_BASE + encodeURIComponent(apiUrl);
-        const apiResponse = await fetch(proxyApiUrl, { signal });
+        const apiUrl = API_BASE + encodeURIComponent(sku);
+        const proxyApiUrl = PROXY_BASE + encodeURIComponent(addCacheBust(apiUrl, imageCacheBust));
+        let apiResponse = await fetch(proxyApiUrl, { signal, cache: "no-store" });
+        if (!apiResponse.ok) {
+            apiResponse = await fetch(PROXY_BASE + encodeURIComponent(apiUrl), { signal, cache: "no-store" });
+        }
         if (!apiResponse.ok) return null;
         const apiData = await apiResponse.json();
-        if (!apiData || !apiData.data || !apiData.data.image) return null;
+        const meta = getProductMetaFromApiData(apiData, sku);
+        const imageUrl = meta.image || "";
+        if (!imageUrl) return null;
         if (signal?.aborted) return null;
-        const realImageUrl = apiData.data.image;
-        const proxyImageUrl = PROXY_BASE + encodeURIComponent(realImageUrl);
-        const imgResponse = await fetch(proxyImageUrl, { signal });
+        const realImageUrl = imageUrl;
+        const proxyImageUrl = PROXY_BASE + encodeURIComponent(addCacheBust(realImageUrl, imageCacheBust));
+        let imgResponse = await fetch(proxyImageUrl, { signal, cache: "no-store" });
+        if (!imgResponse.ok) {
+            imgResponse = await fetch(PROXY_BASE + encodeURIComponent(realImageUrl), { signal, cache: "no-store" });
+        }
         if (!imgResponse.ok) return null;
         const imgBlob = await imgResponse.blob();
         const imgBuffer = await imgBlob.arrayBuffer();
         if (imgBuffer.byteLength < 50) return null;
-        const bytes = new Uint8Array(imgBuffer);
-        imageCache.set(sku, bytes);
-        return bytes;
+        let bytes = new Uint8Array(imgBuffer);
+        if (TRIM_IMAGE_WHITESPACE) {
+            bytes = await trimImageWhitespace(bytes, sku) || bytes;
+        }
+        const result = {
+            imageBytes: bytes,
+            url: meta.url || null,
+            category: meta.category || null
+        };
+        imageCache.set(cacheKey, result);
+        return result;
     } catch (err) {
         if (err?.name === "AbortError") return null;
         logMessage(`Ошибка фото ${sku}: ${err.message}`);
         return null;
     }
+}
+
+async function fetchImagesForProducts(skus, signal, onProgress, shouldCancel) {
+    const batchResults = await fetchImageBatch(skus, signal);
+    if (batchResults) {
+        const results = new Array(skus.length).fill(null);
+        await mapWithConcurrency(
+            skus,
+            IMAGE_FETCH_CONCURRENCY,
+            async (sku, index) => {
+                if (!sku) return null;
+                const meta = batchResults.get(String(sku).trim());
+                const imageUrl = meta?.image || "";
+                const imageBytes = imageUrl ? await fetchImageBytesFromUrlWithRetry(imageUrl, signal, sku) : null;
+                results[index] = imageBytes ? {
+                    imageBytes,
+                    url: meta?.url || null,
+                    category: meta?.category || null
+                } : null;
+                return results[index];
+            },
+            onProgress,
+            shouldCancel
+        );
+        return results;
+    }
+    return mapWithConcurrency(
+        skus,
+        IMAGE_FETCH_CONCURRENCY,
+        async (sku) => fetchImageForProduct(sku, signal),
+        onProgress,
+        shouldCancel
+    );
+}
+
+async function fetchImageBatch(skus, signal) {
+    const cleanSkus = (skus || []).filter(Boolean).map(sku => String(sku).trim());
+    if (cleanSkus.length < 2) return null;
+    try {
+        const endpointUrl = API_BASE.replace(/\?article=$/, "");
+        let response = await fetch(PROXY_API_BASE + encodeURIComponent(addCacheBust(endpointUrl, imageCacheBust)), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ articles: cleanSkus }),
+            signal,
+            cache: "no-store"
+        });
+        if (!response.ok) {
+            const apiUrl = API_BASE + encodeURIComponent(cleanSkus.join(","));
+            response = await fetch(PROXY_BASE + encodeURIComponent(addCacheBust(apiUrl, imageCacheBust)), { signal, cache: "no-store" });
+        }
+        if (!response.ok) return null;
+        const apiData = await response.json();
+        if (!apiData?.data || typeof apiData.data !== "object" || apiData.data.image) return null;
+        const map = new Map();
+        for (const sku of cleanSkus) {
+            const entry = apiData.data[String(sku).trim()];
+            const meta = normalizeApiProductEntry(entry);
+            if (meta.image || meta.url || meta.category) map.set(sku, meta);
+        }
+        return map.size > 0 ? map : null;
+    } catch {
+        return null;
+    }
+}
+
+async function fetchImageBytesFromUrl(imageUrl, signal, sku = "") {
+    if (!imageUrl) return null;
+    const proxyImageUrl = PROXY_BASE + encodeURIComponent(addCacheBust(imageUrl, imageCacheBust));
+    let response = await fetch(proxyImageUrl, { signal, cache: "no-store" });
+    if (!response.ok) response = await fetch(PROXY_BASE + encodeURIComponent(imageUrl), { signal, cache: "no-store" });
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    const buffer = await blob.arrayBuffer();
+    if (buffer.byteLength < 50) return null;
+    let bytes = new Uint8Array(buffer);
+    if (TRIM_IMAGE_WHITESPACE) bytes = await trimImageWhitespace(bytes, sku) || bytes;
+    return bytes;
+}
+
+async function fetchImageBytesFromUrlWithRetry(imageUrl, signal, sku = "") {
+    for (let attempt = 0; attempt <= IMAGE_FETCH_RETRIES; attempt++) {
+        const result = await fetchImageBytesFromUrl(imageUrl, signal, sku);
+        if (result || signal?.aborted) return result;
+        if (attempt < IMAGE_FETCH_RETRIES) await delay(350);
+    }
+    return null;
+}
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getImageUrlFromApiData(apiData, sku) {
+    return getProductMetaFromApiData(apiData, sku).image || "";
+}
+
+function getProductMetaFromApiData(apiData, sku) {
+    if (!apiData || !apiData.data) return normalizeApiProductEntry(null);
+    if (apiData.data.image) return normalizeApiProductEntry(apiData.data);
+    const skuEntry = apiData.data[String(sku || "").trim()];
+    if (skuEntry) return normalizeApiProductEntry(skuEntry);
+    const firstEntry = Object.values(apiData.data).find(entry => entry && (entry.image || entry.url));
+    return normalizeApiProductEntry(firstEntry);
+}
+
+function normalizeApiProductEntry(entry) {
+    return {
+        image: normalizeUrl(entry?.image || ""),
+        url: normalizeUrl(entry?.url || entry?.productUrl || ""),
+        category: entry?.category || null
+    };
+}
+
+async function trimImageWhitespace(bytes, sku = "") {
+    try {
+        const blob = new Blob([bytes]);
+        const bitmap = await createImageBitmap(blob);
+        const w = bitmap.width;
+        const h = bitmap.height;
+        if (w < 20 || h < 20) return null;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return null;
+        ctx.drawImage(bitmap, 0, 0);
+
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const data = imageData.data;
+        let minX = w;
+        let minY = h;
+        let maxX = -1;
+        let maxY = -1;
+
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                const i = (y * w + x) * 4;
+                if (!isNearWhitePixel(data[i], data[i + 1], data[i + 2], data[i + 3])) {
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+
+        if (maxX < minX || maxY < minY) return null;
+
+        const contentW = maxX - minX + 1;
+        const contentH = maxY - minY + 1;
+        const originalArea = w * h;
+        const contentArea = contentW * contentH;
+        if (contentArea / originalArea < 0.01) {
+            smallImageObjectCount++;
+            if (sku) smallImageObjectSkus.add(String(sku));
+            return null;
+        }
+        if (contentArea / originalArea > 0.94) return null;
+        if (contentW < w * 0.015 || contentH < h * 0.015) return null;
+
+        const pad = Math.max(2, Math.round(Math.max(contentW, contentH) * 0.04));
+        const sx = Math.max(0, minX - pad);
+        const sy = Math.max(0, minY - pad);
+        const ex = Math.min(w - 1, maxX + pad);
+        const ey = Math.min(h - 1, maxY + pad);
+        const cropW = ex - sx + 1;
+        const cropH = ey - sy + 1;
+        if (cropW >= w * 0.96 && cropH >= h * 0.96) return null;
+
+        const shouldRotate = shouldRotateCroppedImage(cropW, cropH);
+        const sourceW = shouldRotate ? cropH : cropW;
+        const sourceH = shouldRotate ? cropW : cropH;
+        const fitted = fitInside(sourceW, sourceH, PRODUCT_IMAGE_MAX_SIZE);
+        const out = document.createElement("canvas");
+        out.width = fitted.width;
+        out.height = fitted.height;
+        const outCtx = out.getContext("2d");
+        if (!outCtx) return null;
+        outCtx.imageSmoothingEnabled = true;
+        outCtx.imageSmoothingQuality = "high";
+        if (shouldRotate) {
+            outCtx.translate(out.width, 0);
+            outCtx.rotate(Math.PI / 2);
+            outCtx.drawImage(canvas, sx, sy, cropW, cropH, 0, 0, out.height, out.width);
+        } else {
+            outCtx.drawImage(canvas, sx, sy, cropW, cropH, 0, 0, out.width, out.height);
+        }
+
+        const outBlob = await canvasToBlob(out, "image/png");
+        if (!outBlob) return null;
+        const outBuffer = await outBlob.arrayBuffer();
+        if (outBuffer.byteLength < 50) return null;
+        return new Uint8Array(outBuffer);
+    } catch (err) {
+        logMessage(`Обрезка фото не удалась: ${err.message}`);
+        return null;
+    }
+}
+
+function shouldRotateCroppedImage(width, height) {
+    if (!width || !height) return false;
+    return height / width >= 1.18;
+}
+
+function fitInside(width, height, maxSize) {
+    if (!width || !height) return { width: maxSize, height: maxSize };
+    const scale = Math.min(maxSize / width, maxSize / height);
+    return {
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale))
+    };
+}
+
+function isNearWhitePixel(r, g, b, a) {
+    if (a < 20) return true;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    return r >= 244 && g >= 244 && b >= 244 && (max - min) <= 18;
+}
+
+function canvasToBlob(canvas, type) {
+    return new Promise(resolve => canvas.toBlob(resolve, type));
+}
+
+function addCacheBust(url, value) {
+    const glue = String(url).includes("?") ? "&" : "?";
+    return `${url}${glue}_figma_cb=${encodeURIComponent(value)}`;
 }
 
 async function mapWithConcurrency(items, limit, worker, onProgress, shouldCancel) {
@@ -1479,8 +2082,14 @@ async function mapWithConcurrency(items, limit, worker, onProgress, shouldCancel
 
 // --- ЗАПУСК ГЕНЕРАЦИИ (КНОПКА 1) ---
 async function startGeneration(limitCount = null, options = {}) {
+    const generationStartedAt = performance.now();
     resetCancellation();
     clearLog();
+    lastGenerationStats = null;
+    smallImageObjectCount = 0;
+    smallImageObjectSkus.clear();
+    imageCacheBust = Date.now();
+    imageCache.clear();
     const giftBlockEnabled = true;
     const giftBlockMode = "startSecond";
     const skipImages = !!document.getElementById('skipImagesToggle')?.checked;
@@ -1502,38 +2111,40 @@ async function startGeneration(limitCount = null, options = {}) {
         currentJsonCount = jsonData.length;
         updateJsonSummary(currentJsonCount);
 
-        let orderList = [];
-        let infoMap = {};
-        const orderTexts = await getOrderTexts();
-        if (orderTexts.length === 0) {
+        const sheetContexts = createSheetContexts(jsonData, options, limitCount);
+        if (sheetContexts.length === 0) {
             throw new Error("Загрузите лист Google");
         }
-        updateProgress(12, 100, "Чтение CSV...", googleOrderSheetName || "Google лист");
+        updateProgress(12, 100, "Чтение CSV...", sheetContexts.length === 1 ? sheetContexts[0].title : `${sheetContexts.length} листа`);
         throwIfCancelled();
-        const parsedOrder = parseOrderFileBest(orderTexts);
-        orderList = parsedOrder.orderList;
-        infoMap = parsedOrder.infoMap;
-        
-        let orderedProducts = selectProductsByOrder(jsonData, orderList);
-        if (orderedProducts.length === 0) {
-            throw new Error("В Google листе не найдено товаров из встроенной базы");
-        }
-        const total = orderedProducts.length;
-        let sourceGroups;
-        if (options.leafletSample) {
-            sourceGroups = pickLeafletTestGroups(orderedProducts, infoMap, 2);
-            logMessage("Тест по листовкам: взято до 2 товаров на каждую листовку");
-        } else {
-            const maxCount = limitCount && Number.isFinite(limitCount) ? Math.min(total, limitCount) : total;
-            sourceGroups = orderedProducts.slice(0, maxCount);
-        }
-        updateOrderSummary(infoMap, sourceGroups.length);
-        logPreflight(jsonData, infoMap, sourceGroups);
 
-        const mainSkus = sourceGroups.map(item => (
-            item && item.variants && item.variants.length > 0 ? item.variants[0].sku : null
-        ));
+        for (const sheet of sheetContexts) {
+            assertQualityGates(sheet.context);
+        }
+        const combinedInfoMap = mergeSheetContextsInfoMap(sheetContexts);
+        const sourceGroups = sheetContexts.flatMap(sheet => sheet.context.sourceGroups);
+        const orderList = sheetContexts.length === 1 ? sheetContexts[0].context.orderList : [];
+        const infoMap = sheetContexts.length === 1 ? sheetContexts[0].context.infoMap : combinedInfoMap;
+        if (options.leafletSample) {
+            logMessage("Тест по листовкам: взято до 2 товаров на каждую листовку");
+        }
+        updateOrderSummary(
+            infoMap,
+            sourceGroups.length,
+            sheetContexts.length === 1 ? sheetContexts[0].promoType : "auto"
+        );
+        if (sheetContexts.length > 1) {
+            logMessage(`Google листов к генерации: ${sheetContexts.length}`);
+            for (const sheet of sheetContexts) {
+                logMessage(`${sheet.title}: ${sheet.context.sourceGroups.length} товаров`);
+            }
+        } else {
+            logPreflight(jsonData, infoMap, sourceGroups);
+        }
+
+        const mainSkus = getMainSkusForGroups(sourceGroups);
         let imageResults = new Array(sourceGroups.length).fill(null);
+        let imageFetchMs = 0;
         if (skipImages) {
             logMessage("Быстрый режим: картинки не скачиваются");
         } else {
@@ -1542,10 +2153,10 @@ async function startGeneration(limitCount = null, options = {}) {
             throwIfCancelled();
 
             updateProgress(20, 100, "Скачивание фото...", "Пакетная загрузка");
-            imageResults = await mapWithConcurrency(
+            const imageStartedAt = performance.now();
+            imageResults = await fetchImagesForProducts(
                 mainSkus,
-                IMAGE_FETCH_CONCURRENCY,
-                async (sku) => fetchImageForProduct(sku, activeAbortController?.signal),
+                activeAbortController?.signal,
                 (completed, count, sku) => {
                     if (generationCancelled) return;
                     if (completed === count || completed % 5 === 0) {
@@ -1559,53 +2170,46 @@ async function startGeneration(limitCount = null, options = {}) {
                 },
                 () => generationCancelled
             );
+            imageFetchMs = Math.round(performance.now() - imageStartedAt);
+            const loadedImages = countLoadedImages(imageResults);
+            logMessage(`Фото загружено: ${loadedImages} / ${sourceGroups.length}`);
+            if (smallImageObjectSkus.size > 0) {
+                const sample = [...smallImageObjectSkus].slice(0, 15).join(", ");
+                logMessage(`Мелкие объекты на фото: ${smallImageObjectSkus.size}${sample ? ` (${sample}${smallImageObjectSkus.size > 15 ? " ..." : ""})` : ""}`);
+            }
         }
         throwIfCancelled();
-        logDataProblemReport(jsonData, infoMap, sourceGroups, skipImages ? null : imageResults);
+        if (sheetContexts.length > 1) {
+            for (const sheet of sheetContexts) {
+                logMessage(`Отчет: ${sheet.title}`);
+                logDataProblemReport(jsonData, sheet.context.infoMap, sheet.context.sourceGroups, null);
+            }
+        } else {
+            logDataProblemReport(jsonData, infoMap, sourceGroups, skipImages ? null : getImageBytesResults(imageResults));
+        }
 
+        const payloadStartedAt = performance.now();
+        updateProgress(65, 100, "Сборка каталога...", "Подготовка данных");
+        throwIfCancelled();
+        const runPayloads = buildMultiRunPayload(sheetContexts, imageResults);
         const processedGroups = [];
 
-        // 3. СБОРКА ДАННЫХ ДЛЯ FIGMA
-        for (let i = 0; i < sourceGroups.length; i++) {
-            throwIfCancelled();
-            const item = sourceGroups[i];
-            const mainSku = mainSkus[i];
-            const imageBytes = imageResults[i];
-            if (i === sourceGroups.length - 1 || i % 10 === 0) {
-                updateProgress(
-                    65 + Math.round(((i + 1) / Math.max(1, sourceGroups.length)) * 30),
-                    100,
-                    "Сборка каталога...",
-                    item.title || "Товар"
-                );
-            }
-            const mainDiscount = mainSku && infoMap[mainSku] ? infoMap[mainSku].discount : null;
-            const mainConditions = mainSku && infoMap[mainSku] ? infoMap[mainSku].conditions : null;
-            const mainSurprise = resolveSurpriseText(mainSku, item, infoMap);
-            const mainLeafletName = resolveLeafletName(mainSku, item, infoMap);
-            processedGroups.push({
-                headerName: item.title,          
-                descriptionText: item.description, 
-                imageBytes: imageBytes,
-                discountText: mainDiscount || null,
-                discountInfoText: mainSurprise ? null : (mainConditions || null),
-                surpriseText: mainSurprise || null,
-                mainSku: mainSku,
-                leafletName: mainLeafletName || null,
-                
-                // Передаем ID бренда для переключения логотипа
-                brandId: item.brand, 
-
-                items: item.variants.map(v => ({
-                    sku: v.sku,
-                    specs: v.specs,
-                    min: v.min,
-                    qty: v.qty,
-                    price: cleanPrice(v.price),
-                    discount: infoMap?.[v.sku]?.discount || null
-                }))
-            });
-        }
+        const statsGroups = runPayloads ? runPayloads.flatMap(run => run.groups) : processedGroups;
+        const rowsCount = statsGroups.reduce((sum, group) => sum + (Array.isArray(group.items) ? group.items.length : 0), 0);
+        const isBoxRun = statsGroups.some(group => group.cardType === "box");
+        lastGenerationStats = {
+            cards: statsGroups.length,
+            rows: rowsCount,
+            loadedImages: skipImages ? 0 : countLoadedImages(imageResults),
+            totalImages: skipImages ? 0 : sourceGroups.length,
+            skipImages,
+            isBox: isBoxRun,
+            smallImageObjectCount,
+            imageFetchMs,
+            payloadMs: Math.round(performance.now() - payloadStartedAt),
+            totalUiMs: Math.round(performance.now() - generationStartedAt)
+        };
+        logMessage(`Производительность: фото ${lastGenerationStats.imageFetchMs}мс, данные ${lastGenerationStats.payloadMs}мс, UI всего ${lastGenerationStats.totalUiMs}мс`);
 
         // 4. ЗАВЕРШЕНИЕ
         updateProgress(98, 100, "Передача данных...", "Отправляем в Figma");
@@ -1618,7 +2222,14 @@ async function startGeneration(limitCount = null, options = {}) {
         giftBlockMode,
         settings,
         orderList,
-        infoMap
+        infoMap,
+        mainTitle: sheetContexts.length === 1 ? sheetContexts[0].title : "",
+        uiStats: {
+            imageFetchMs: lastGenerationStats.imageFetchMs,
+            payloadMs: lastGenerationStats.payloadMs,
+            totalUiMs: lastGenerationStats.totalUiMs
+        },
+        runs: runPayloads
     };
 
         setTimeout(() => {
@@ -1643,19 +2254,18 @@ async function startGeneration(limitCount = null, options = {}) {
 // --- ЗАПУСК ОБНОВЛЕНИЯ ---
 async function startUpdate() {
     resetCancellation();
-    const texts = await getOrderTexts();
-    if (texts.length === 0) {
+    const sheets = getLoadedGoogleSheets();
+    if (sheets.length === 0) {
         showError("Загрузите лист Google");
         return;
     }
     
     disableButtons(true);
     showProgress(true);
-    updateProgress(0, 100, "Подготовка...", googleOrderSheetName || "Google лист");
+    updateProgress(0, 100, "Подготовка...", sheets.length === 1 ? (sheets[0].sheetName || "Google лист") : `${sheets.length} листа`);
 
     try {
-        const parsedOrder = parseOrderFileBest(texts);
-        const infoMap = parsedOrder.infoMap;
+        const infoMap = mergeInfoMaps(sheets.map(sheet => (sheet.parsedOrder || parseOrderFileBest([sheet.csv])).infoMap));
         currentOrderInfoMap = infoMap;
         updateOrderSummary(currentOrderInfoMap, currentJsonCount);
         
@@ -1699,15 +2309,20 @@ async function startDataValidation() {
         updateJsonSummary(currentJsonCount);
 
         let infoMap = {};
-        const texts = await getOrderTexts();
-        if (texts.length === 0) {
+        const sheets = getLoadedGoogleSheets();
+        if (sheets.length === 0) {
             throw new Error("Загрузите лист Google");
         }
-        const parsedOrder = parseOrderFileBest(texts);
+        const parsedOrder = sheets.length === 1
+            ? (sheets[0].parsedOrder || parseOrderFileBest([sheets[0].csv]))
+            : {
+                orderList: sheets.flatMap(sheet => (sheet.parsedOrder || parseOrderFileBest([sheet.csv])).orderList || []),
+                infoMap: mergeInfoMaps(sheets.map(sheet => (sheet.parsedOrder || parseOrderFileBest([sheet.csv])).infoMap))
+            };
         infoMap = parsedOrder.infoMap;
         currentOrderInfoMap = infoMap;
 
-        const sourceGroups = selectProductsByOrder(jsonData, parsedOrder.orderList);
+        const sourceGroups = selectProductsForGeneration(jsonData, parsedOrder.orderList, infoMap);
         if (sourceGroups.length === 0) {
             throw new Error("В Google листе не найдено товаров из встроенной базы");
         }
@@ -1742,28 +2357,21 @@ window.addEventListener('DOMContentLoaded', () => {
     const debugControls = document.getElementById('debugControls');
     if (debugControls && !DEBUG_UI) debugControls.classList.add('hidden');
     refreshJsonSummary();
-    onClick('settingsBtn', openSettings);
     onClick('settingsCloseBtn', closeSettings);
-    document.getElementById('settingsModal').addEventListener('click', (e) => {
+    document.getElementById('settingsModal')?.addEventListener('click', (e) => {
         if (e.target && e.target.id === 'settingsModal') closeSettings();
     });
     onClick('runBtn', startGeneration);
     onClick('updateBtn', startUpdate);
     const googleSelect = document.getElementById('googleSheetSelect');
     if (googleSelect) {
+        googleSelect.dataset.sheetSelect = "1";
+        googleSelect.dataset.sheetId = "primary";
         googleSelect.addEventListener('change', () => {
-            if (googleSelect.value) {
-                loadGoogleCsv();
-            } else {
-                googleOrderCsvText = "";
-                googleOrderSheetName = "";
-                currentOrderInfoMap = {};
-                updateOrderSummary(currentOrderInfoMap, currentJsonCount);
-                const label = document.getElementById('orderFileName');
-                if (label) label.textContent = "Лист не загружен";
-            }
+            handleGoogleSheetSelection(googleSelect);
         });
     }
+    onClick('addGoogleSheetBtn', createGoogleSheetRow);
     onClick('testBtn', startTestGeneration);
     onClick('testLeafletsBtn', startLeafletTestGeneration);
     onClick('validateDataBtn', startDataValidation);
@@ -1785,3 +2393,4 @@ window.addEventListener('DOMContentLoaded', () => {
     loadGoogleSheets(true);
 });
 </script>
+

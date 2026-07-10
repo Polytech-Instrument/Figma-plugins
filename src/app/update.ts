@@ -4,10 +4,9 @@ import {
     findTextInRow,
     findNodeInRowByName,
     findNodeInCard,
-    loadFontForNode,
-    normalizeDiscountText,
-    normalizePriceText
+    loadFontForNode
 } from './utils';
+import { normalizeDiscountText, normalizePriceText, normalizeMultiplicityText } from './normalizers';
 import { parseDiscountValue, updateSaleBannerInfo } from './banner';
 import { InfoMap } from './types';
 
@@ -31,6 +30,8 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
 
     let updatedDiscounts = 0;
     let updatedPrices = 0;
+    let updatedBoxFields = 0;
+    let missingCards = 0;
     let foundCards = 0;
 
     const cards = figma.root.findAll(n =>
@@ -55,6 +56,7 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
 
         if (targetCards.length === 0) {
             postLog(`[update-info] card not found for code: ${code}`);
+            missingCards++;
             continue;
         }
         foundCards += targetCards.length;
@@ -65,8 +67,12 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
             const discountLayer = findTextInNode(targetCard, CONFIG.DISCOUNT);
             const saleStarNode = findNodeInCard(targetCard, CONFIG.SALE_STAR);
             const discountInfoLayer = findTextInNode(targetCard, CONFIG.DISCOUNT_INFO);
+            const discountInfoWrapper = findNodeInCard(targetCard, CONFIG.DISCOUNT_INFO);
             const surpriseLayer = findTextInNode(targetCard, CONFIG.SURPRISE);
             const surpriseWrapper = findNodeInCard(targetCard, CONFIG.SURPRISE_WRAPPER);
+            const boxPriceLayer = findTextInNode(targetCard, CONFIG.BOX_PRICE);
+            const boxQtyLayer = findTextInNode(targetCard, CONFIG.BOX_QTY);
+            const boxNoticeLayer = findTextInNode(targetCard, CONFIG.BOX_NOTICE);
 
             if (discountLayer) {
                 await loadFontForNode(discountLayer);
@@ -89,9 +95,13 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
                 if (cond && String(cond).trim() !== "") {
                     discountInfoLayer.characters = String(cond);
                     discountInfoLayer.visible = true;
+                    if (discountInfoWrapper) discountInfoWrapper.visible = true;
                 } else {
                     discountInfoLayer.visible = false;
+                    if (discountInfoWrapper) discountInfoWrapper.visible = false;
                 }
+            } else if (discountInfoWrapper && !(entry.conditions && String(entry.conditions).trim())) {
+                discountInfoWrapper.visible = false;
             }
             if (surpriseLayer) {
                 await loadFontForNode(surpriseLayer);
@@ -107,6 +117,10 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
             } else if (surpriseWrapper && !entry.surpriseText) {
                 surpriseWrapper.visible = false;
             }
+
+            if (await setOptionalText(boxPriceLayer, normalizePriceText(String(entry.boxPrice || entry.price || "")))) updatedBoxFields++;
+            if (await setOptionalText(boxQtyLayer, normalizeMultiplicityText(String(entry.multiplicity || entry.boxQty || "")))) updatedBoxFields++;
+            if (await setOptionalText(boxNoticeLayer, entry.boxNotice)) updatedBoxFields++;
         }
     }
 
@@ -159,16 +173,33 @@ export async function updateInfoOnPage(payload: { infoMap: InfoMap; updatePrice?
     // Update per-row discount labels if they differ from card discount.
     await updateRowItemDiscounts(infoMap, cards);
 
-    postLog(`[update-info] foundCards: ${foundCards}, updatedDiscounts: ${updatedDiscounts}, updatedPrices: ${updatedPrices}`);
+    postLog(`[update-info] foundCards: ${foundCards}, updatedDiscounts: ${updatedDiscounts}, updatedPrices: ${updatedPrices}, updatedBoxFields: ${updatedBoxFields}, missingCards: ${missingCards}`);
     await updateSaleBannerInfo(infoMap);
     if (foundCards === 0 && updatedPrices === 0) {
         figma.ui.postMessage({ type: 'complete', text: "Cards not found." });
         return;
     }
 
-    const pricePart = updatePrice ? `, prices: ${updatedPrices}` : "";
-    figma.notify(`Updated discounts: ${updatedDiscounts}${pricePart}`);
-    figma.ui.postMessage({ type: 'complete', text: `Done! Discounts: ${updatedDiscounts}${pricePart}` });
+    const parts = [
+        `карточек найдено: ${foundCards}`,
+        `скидок: ${updatedDiscounts}`
+    ];
+    if (updatePrice) parts.push(`цен: ${updatedPrices}`);
+    if (updatedBoxFields > 0) parts.push(`коробочных полей: ${updatedBoxFields}`);
+    if (missingCards > 0) parts.push(`не найдено: ${missingCards}`);
+    const text = `Обновление готово: ${parts.join(", ")}`;
+    figma.notify(text);
+    figma.ui.postMessage({ type: 'complete', text });
+}
+
+async function setOptionalText(node: TextNode | null, value?: string | null): Promise<boolean> {
+    if (!node) return false;
+    await loadFontForNode(node);
+    const text = value ? String(value).trim() : "";
+    const changed = node.characters !== text || node.visible !== (text !== "");
+    node.characters = text;
+    node.visible = text !== "";
+    return changed;
 }
 
 // Show per-row discount labels if they differ from card discount.
@@ -200,7 +231,7 @@ async function updateRowItemDiscounts(infoMap: InfoMap, cards: (FrameNode | Inst
             const itemSaleNode = findNodeInRowByName(row as FrameNode | InstanceNode, CONFIG.ROW_ITEM_SALE);
             const itemSaleText = findTextInRow(row as FrameNode | InstanceNode, CONFIG.ROW_ITEM_SALE_DISCOUNT);
 
-            const shouldShow = baseDiscount !== null && rowDiscount !== null && !discountEquals(baseDiscount, rowDiscount);
+            const shouldShow = rowDiscount !== null && (baseDiscount === null || !discountEquals(baseDiscount, rowDiscount));
 
             if (itemSaleNode) itemSaleNode.visible = shouldShow;
             if (shouldShow && itemSaleText) {
